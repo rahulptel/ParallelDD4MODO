@@ -12,10 +12,6 @@ CCC = g++
 NVCC ?= nvcc
 USE_CUDA ?= 0
 
-BASISILOG  = $(BASISDIR)/ibm/ILOG/cplex
-CPOPTDIR   = $(BASISILOG)/cpoptimizer
-CONCERTDIR = $(BASISILOG)/concert
-CPLEXDIR   = $(BASISILOG)/cplex
 BOOSTDIR   = $(BASISDIR)/boost
 
 GUROBIDIR = /opt/gurobi/$(PLATFORM)
@@ -25,14 +21,7 @@ GUROBILIBDIR = $(GUROBIDIR)/lib
 
 # --- FLAGS ---
 
-CCOPT = -std=c++11 -m64 -fPIC -fno-strict-aliasing -fexceptions -DIL_STD -Wno-deprecated-declarations -Wno-ignored-attributes
-CPLEXLIBDIR   = $(CPLEXDIR)/lib/$(SYSTEM)/$(LIBFORMAT)
-CONCERTLIBDIR = $(CONCERTDIR)/lib/$(SYSTEM)/$(LIBFORMAT)
-CPOPTLIBDIR = $(CPOPTDIR)/lib/$(SYSTEM)/$(LIBFORMAT)
-
-CONCERTINCDIR = $(CONCERTDIR)/include
-CPLEXINCDIR   = $(CPLEXDIR)/include
-CPOPTINCDIR   = $(CPOPTDIR)/include
+CCOPT = -std=c++11 -m64 -fPIC -fno-strict-aliasing -fexceptions -Wno-deprecated-declarations -Wno-ignored-attributes
 
 # --- OPTIMIZATION FLAGS ---
 
@@ -47,9 +36,8 @@ PROF =
 CFLAGS  = -I$(BOOSTDIR)/include -c $(PROF) $(DEBUG_OPT)
 LDFLAGS = -lm -pthread
 
-# Uncomment if using CPLEX/CPOPTIMIZER
-CFLAGS  += $(CCOPT) -I$(CPLEXINCDIR) -I$(CONCERTINCDIR) -I$(CPOPTINCDIR) 
-LDFLAGS += -L$(CPOPTLIBDIR) -lcp -L$(CPLEXLIBDIR) -lilocplex -lcplex -L$(CONCERTLIBDIR) -lconcert -ldl
+# Base compilation flags
+CFLAGS  += $(CCOPT)
 
 # Uncomment if using Gurobi
 #CFLAGS += -I$(GUROBIINCDIR)
@@ -64,7 +52,7 @@ CFLAGS += -DNOBJS=$(NUM_OBJS)
 
 ifeq ($(USE_CUDA),1)
 CFLAGS += -DUSE_CUDA
-CUDAFLAGS = -std=c++11 -O3 -DUSE_CUDA -DNOBJS=$(NUM_OBJS) -I$(BOOSTDIR)/include -I$(CPLEXINCDIR) -I$(CONCERTINCDIR) -I$(CPOPTINCDIR)
+CUDAFLAGS = -std=c++11 -O3 -DUSE_CUDA -DNOBJS=$(NUM_OBJS) -I$(BOOSTDIR)/include
 LDFLAGS += -lcudart
 endif
 

@@ -14,8 +14,6 @@
 #include "indepset_instance.hpp"
 #include "../util/util.hpp"
 
-#include <ilcp/cpext.h>
-
 using namespace std;
 
 
@@ -497,77 +495,59 @@ Graph* Graph::decompose_into_cluster_cliques(vector<Graph*>& cliques,
 		vector< vector<int> >& vertex_ind)
 {
 	Graph* graph = NULL;
+	const int num_clusters = std::min(6, std::max(1, this->n_vertices));
 
-	try {
+	// CPLEX-based clustering has been removed.
+	// Use a deterministic degree-based greedy partition instead.
+	vector<int> order(this->n_vertices);
+	for (int i = 0; i < this->n_vertices; ++i) {
+		order[i] = i;
+	}
+	std::sort(order.begin(), order.end(), [this](int a, int b) {
+		if (this->degree(a) != this->degree(b)) {
+			return this->degree(a) > this->degree(b);
+		}
+		return a < b;
+	});
 
-		IloEnv env;
-		IloModel model(env);
+	vertex_ind.clear();
+	vertex_ind.resize(num_clusters);
+	vector<int> cluster_sizes(num_clusters, 0);
+	for (size_t i = 0; i < order.size(); ++i) {
+		int best_cluster = 0;
+		for (int c = 1; c < num_clusters; ++c) {
+			if (cluster_sizes[c] < cluster_sizes[best_cluster]) {
+				best_cluster = c;
+			}
+		}
+		vertex_ind[best_cluster].push_back(order[i]);
+		cluster_sizes[best_cluster]++;
+	}
 
-		int num_clusters = 6;
+	// Remove empty clusters
+	vertex_ind.erase(
+		std::remove_if(vertex_ind.begin(), vertex_ind.end(),
+			[](const vector<int>& cluster) { return cluster.empty(); }),
+		vertex_ind.end());
 
-		IloIntVarArray x(env, n_vertices, 0, num_clusters-1);
+	cout << "Total number of clusters: " << vertex_ind.size() << endl;
 
-		IloExpr obj(env);
-		for (int i = 0; i < this->n_vertices; ++i) {
-			for (int j = i+1; j < this->n_vertices; ++j) {
-				if (!this->is_adj(i,j)) {
-					obj += (x[i] == x[j]);
-				} else {
-					obj += (x[i] != x[j]);
+	cliques.clear();
+	cliques.resize(vertex_ind.size());
+	for (size_t c = 0; c < vertex_ind.size(); ++c) {
+		cliques[c] = new Graph(this->n_vertices);
+		cout << "Clique " << c << ": ";
+		for (size_t i = 0; i < vertex_ind[c].size(); ++i) {
+			cout << vertex_ind[c][i] << " ";
+			for (size_t j = i + 1; j < vertex_ind[c].size(); ++j) {
+				int u = vertex_ind[c][i];
+				int v = vertex_ind[c][j];
+				if (is_adj(u, v)) {
+					cliques[c]->add_edge(u, v);
 				}
 			}
 		}
-
-		model.add( IloMinimize(env, obj) );
-
-		IloCP cp(model);
-		cp.setParameter(IloCP::Workers, 1);
-		cp.setParameter(IloCP::TimeLimit, 30);
-
-		cp.solve();
-
-
-		int t_clusters = 0;
-		vector<int> cluster_map(num_clusters, -1);
-		for (int i = 0; i < this->n_vertices; ++i) {
-			if (cluster_map[cp.getValue(x[i])] == -1) {
-				cluster_map[cp.getValue(x[i])] = t_clusters++;
-			}
-		}
-
-		cout << "Total number of clusters: " << t_clusters << endl;
-
-		// collect cliques
-		vertex_ind.clear();
-		vertex_ind.resize(t_clusters);
-		for (int i = 0; i < this->n_vertices; ++i) {
-			vertex_ind[cluster_map[cp.getValue(x[i])]].push_back(i);
-		}
-
-		cliques.clear();
-		cliques.resize(t_clusters);
-		for (int c = 0; c < t_clusters; ++c) {
-			cliques[c] = new Graph(this->n_vertices);
-			cout << "Clique " << c << ": ";
-			for (size_t i = 0; i < vertex_ind[c].size(); ++i) {
-				cout << vertex_ind[c][i] << " ";
-				for (size_t j = i+1; j < vertex_ind[c].size(); ++j) {
-					int u = vertex_ind[c][i];
-					int v = vertex_ind[c][j];
-					if (is_adj(u,v)) {
-						cliques[c]->add_edge(u,v);
-					}
-				}
-			}
-			cout << endl;
-		}
-
-
-
-
-	} catch (IloException& ex) {
-		cout << "ILOG Error: " << ex << endl;
-		exit(1);
+		cout << endl;
 	}
 
 	return graph;
@@ -651,5 +631,4 @@ void Graph::export_negated_dimacs(string filename) {
 
 	out.close();
 }
-
 

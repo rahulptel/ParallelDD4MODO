@@ -5,8 +5,9 @@
 #ifndef PORTFOLIO_OPT_INSTANCE_HPP_
 #define PORTFOLIO_OPT_INSTANCE_HPP_
 
+#include <cassert>
+#include <cmath>
 #include <vector>
-#include <ilcplex/ilocplex.h>
 
 using namespace std;
 
@@ -67,4 +68,3 @@ struct PortfolioInstance {
 };
 
 #endif
-
