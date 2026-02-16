@@ -5,7 +5,6 @@
 // General includes
 #include <iostream>
 #include <cstdlib>
-#include <cstring>
 
 #include "bdd/bdd.hpp"
 #include "bdd/bdd_alg.hpp"
@@ -46,9 +45,9 @@ using namespace std;
 // Main function
 //
 int main(int argc, char* argv[]) {
-    if (argc < 8) {
+    if (argc != 8) {
         cout << '\n';
-        cout << "Usage: multiobj [input file] [problem type] [preprocess?] [method] [appr-S and T] [dominance]\n";
+        cout << "Usage: multiobj [input file] [problem type] [preprocess?] [method] [appr-S] [appr-T] [dominance]\n";
         
         cout << "\n\twhere:";
         
@@ -75,7 +74,7 @@ int main(int argc, char* argv[]) {
         cout << "\n";
         cout << "\t\tdominance = 0:  disable state dominance\n";
         cout << "\t\tdominance = 1:  state dominance strategy 1\n";
-        
+
         cout << endl;
         exit(1);
     }
@@ -316,27 +315,15 @@ int main(int argc, char* argv[]) {
     
     if (method == 1) {
         // -- Optimal BFS algorithm: top-down --
-        const char* backend_env = getenv("MULTIOBJ_ENUM_BACKEND");
-        const bool request_cuda = (backend_env != NULL
-                                   && (strcmp(backend_env, "cuda") == 0
-                                       || strcmp(backend_env, "auto") == 0));
 #ifdef USE_CUDA
-        if (request_cuda && problem_type == 1 && dominance == 0) {
-            pareto_frontier = BDDMultiObj::pareto_frontier_topdown_knapsack_cuda(bdd, statsMultiObj);
-            if (pareto_frontier == NULL) {
-                cout << "Warning: CUDA enumeration failed; falling back to CPU." << endl;
-            }
-        } else if (request_cuda) {
-            cout << "Warning: CUDA backend currently supports only problem_type=1 with dominance=0; using CPU." << endl;
+        pareto_frontier = BDDMultiObj::pareto_frontier_topdown_cuda(bdd, maximization, problem_type, dominance, statsMultiObj);
+        if (pareto_frontier == NULL) {
+            cout << "Error: CUDA enumeration failed in GPU build." << endl;
+            exit(1);
         }
 #else
-        if (request_cuda) {
-            cout << "Warning: CUDA backend requested but binary was built without USE_CUDA=1; using CPU." << endl;
-        }
+        pareto_frontier = BDDMultiObj::pareto_frontier_topdown(bdd, maximization, problem_type, dominance, statsMultiObj);
 #endif
-        if (pareto_frontier == NULL) {
-            pareto_frontier = BDDMultiObj::pareto_frontier_topdown(bdd, maximization, problem_type, dominance, statsMultiObj);
-        }
         
     } else if (method == 2) {
         // -- Optimal BFS algorithm: bottom-up --
