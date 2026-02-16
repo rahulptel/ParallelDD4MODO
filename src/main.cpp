@@ -315,15 +315,11 @@ int main(int argc, char* argv[]) {
     
     if (method == 1) {
         // -- Optimal BFS algorithm: top-down --
-#ifdef USE_CUDA
         pareto_frontier = BDDMultiObj::pareto_frontier_topdown_cuda(bdd, maximization, problem_type, dominance, statsMultiObj);
         if (pareto_frontier == NULL) {
             cout << "Error: CUDA enumeration failed in GPU build." << endl;
             exit(1);
         }
-#else
-        pareto_frontier = BDDMultiObj::pareto_frontier_topdown(bdd, maximization, problem_type, dominance, statsMultiObj);
-#endif
         
     } else if (method == 2) {
         // -- Optimal BFS algorithm: bottom-up --

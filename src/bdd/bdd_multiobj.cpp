@@ -4,10 +4,9 @@
 
 #include "bdd_multiobj.hpp"
 #include "bdd_alg.hpp"
-
-#ifdef USE_CUDA
 #include "../cuda/topdown_cuda.hpp"
-#endif
+
+#pragma weak topdown_cuda_enumerate
 
 typedef std::pair<int,int> intpair;
 
@@ -19,7 +18,6 @@ inline bool SetPackingStateMinElementSmallestToLargestComp(Node* l, Node* r) {
     return l->setpack_state.find_first() < r->setpack_state.find_first();     // from smallest to largest
 }
 
-#ifdef USE_CUDA
 //
 // Find pareto frontier using top-down approach on CUDA
 //
@@ -30,6 +28,11 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown_cuda(BDD* bdd, bool maximiz
         stats->layer_coupling = 0;
     }
 
+    if (topdown_cuda_enumerate == NULL) {
+        cout << "Warning: CUDA top-down enumeration unavailable (binary built without USE_CUDA=1); using CPU." << endl;
+        return BDDMultiObj::pareto_frontier_topdown(bdd, maximization, problem_type, dominance_strategy, stats);
+    }
+
     std::string reason;
     ParetoFrontier* frontier = topdown_cuda_enumerate(bdd, maximization, problem_type, dominance_strategy, stats, &reason);
     if (frontier == NULL && !reason.empty()) {
@@ -37,7 +40,6 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown_cuda(BDD* bdd, bool maximiz
     }
     return frontier;
 }
-#endif
 
 
 //
