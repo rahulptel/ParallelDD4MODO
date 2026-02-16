@@ -6,7 +6,7 @@
 #include "bdd_alg.hpp"
 
 #ifdef USE_CUDA
-#include "../cuda/topdown_knapsack_cuda.hpp"
+#include "../cuda/topdown_cuda.hpp"
 #endif
 
 typedef std::pair<int,int> intpair;
@@ -21,9 +21,9 @@ inline bool SetPackingStateMinElementSmallestToLargestComp(Node* l, Node* r) {
 
 #ifdef USE_CUDA
 //
-// Find pareto frontier using top-down approach on CUDA for knapsack
+// Find pareto frontier using top-down approach on CUDA
 //
-ParetoFrontier* BDDMultiObj::pareto_frontier_topdown_knapsack_cuda(BDD* bdd, MultiObjectiveStats* stats) {
+ParetoFrontier* BDDMultiObj::pareto_frontier_topdown_cuda(BDD* bdd, bool maximization, MultiObjectiveStats* stats) {
     if (stats != NULL) {
         stats->pareto_dominance_time = 0;
         stats->pareto_dominance_filtered = 0;
@@ -31,7 +31,7 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown_knapsack_cuda(BDD* bdd, Mul
     }
 
     std::string reason;
-    ParetoFrontier* frontier = topdown_knapsack_cuda_enumerate(bdd, &reason);
+    ParetoFrontier* frontier = topdown_cuda_enumerate(bdd, maximization, &reason);
     if (frontier == NULL && !reason.empty()) {
         cout << "Warning: CUDA top-down enumeration unavailable (" << reason << ")" << endl;
     }

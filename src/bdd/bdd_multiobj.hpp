@@ -37,8 +37,8 @@ struct BDDMultiObj {
 	static ParetoFrontier* pareto_frontier_topdown(BDD* bdd, bool maximization=true, const int problem_type=-1, const int dominance_strategy=0, MultiObjectiveStats* stats = NULL);
 
 #ifdef USE_CUDA
-    // Find pareto frontier from top-down approach / CUDA / knapsack
-    static ParetoFrontier* pareto_frontier_topdown_knapsack_cuda(BDD* bdd, MultiObjectiveStats* stats = NULL);
+    // Find pareto frontier from top-down approach / CUDA
+    static ParetoFrontier* pareto_frontier_topdown_cuda(BDD* bdd, bool maximization=true, MultiObjectiveStats* stats = NULL);
 #endif
 
     // Find pareto frontier from bottom-up approach

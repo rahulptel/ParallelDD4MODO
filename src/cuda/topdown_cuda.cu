@@ -1,8 +1,8 @@
 // ----------------------------------------------------------
-// CUDA Top-Down Enumeration for Knapsack BDD - Implementation
+// CUDA Top-Down Enumeration for BDD - Implementation
 // ----------------------------------------------------------
 
-#include "topdown_knapsack_cuda.hpp"
+#include "topdown_cuda.hpp"
 
 #include <algorithm>
 #include <vector>
@@ -192,7 +192,7 @@ inline int ceil_div(int a, int b) {
 } // namespace
 
 
-bool topdown_knapsack_cuda_available(std::string* reason) {
+bool topdown_cuda_available(std::string* reason) {
     int device_count = 0;
     cudaError_t err = cudaGetDeviceCount(&device_count);
     if (err != cudaSuccess) {
@@ -205,7 +205,7 @@ bool topdown_knapsack_cuda_available(std::string* reason) {
 }
 
 
-ParetoFrontier* topdown_knapsack_cuda_enumerate(BDD* bdd, std::string* reason) {
+ParetoFrontier* topdown_cuda_enumerate(BDD* bdd, bool maximization, std::string* reason) {
     if (bdd == NULL) {
         set_reason(reason, "BDD pointer is NULL");
         return NULL;
@@ -214,7 +214,7 @@ ParetoFrontier* topdown_knapsack_cuda_enumerate(BDD* bdd, std::string* reason) {
         set_reason(reason, "BDD has zero layers");
         return NULL;
     }
-    if (!topdown_knapsack_cuda_available(reason)) {
+    if (!topdown_cuda_available(reason)) {
         return NULL;
     }
     if (!cuda_ok(cudaSetDevice(0), "cudaSetDevice", reason)) {
@@ -250,9 +250,14 @@ ParetoFrontier* topdown_knapsack_cuda_enumerate(BDD* bdd, std::string* reason) {
         std::vector<int> h_edge_dst;
         std::vector<ObjType> h_edge_weights;
 
+        const int first_arc_type = maximization ? 1 : 0;
+        const int second_arc_type = maximization ? 0 : 1;
+
         for (int dst_idx = 0; dst_idx < next_nodes; ++dst_idx) {
             Node* dst_node = bdd->layers[l][dst_idx];
-            for (int arc_type = 0; arc_type < 2; ++arc_type) {
+            const int arc_order[2] = {first_arc_type, second_arc_type};
+            for (int arc_pos = 0; arc_pos < 2; ++arc_pos) {
+                const int arc_type = arc_order[arc_pos];
                 for (std::vector<Node*>::iterator it = dst_node->prev[arc_type].begin();
                      it != dst_node->prev[arc_type].end(); ++it) {
                     Node* src_node = *it;

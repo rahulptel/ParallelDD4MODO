@@ -9,8 +9,10 @@ PLATFORM   = linux64
 # --- DIRECTORIES ---
 
 CCC = g++
-NVCC ?= nvcc
+NVCC_CANDIDATE := $(firstword $(wildcard /usr/local/cuda/bin/nvcc /usr/local/cuda-*/bin/nvcc))
+NVCC ?= $(if $(NVCC_CANDIDATE),$(NVCC_CANDIDATE),nvcc)
 USE_CUDA ?= 0
+NVCC_MAJOR := $(shell $(NVCC) --version 2>/dev/null | sed -n 's/.*release \([0-9][0-9]*\)\..*/\1/p' | head -n 1)
 
 BOOSTDIR   = $(BASISDIR)/boost
 
@@ -55,8 +57,15 @@ EXECUTABLE = multiobj_$(BUILD_VARIANT)_nobjs$(NUM_OBJS)
 
 ifeq ($(USE_CUDA),1)
 CFLAGS += -DUSE_CUDA
-CUDAFLAGS = -std=c++11 -O3 -DUSE_CUDA -DNOBJS=$(NUM_OBJS) -I$(BOOSTDIR)/include
+CUDAFLAGS = -std=c++14 -O3 -DUSE_CUDA -DNOBJS=$(NUM_OBJS) -I$(BOOSTDIR)/include
 LDFLAGS += -lcudart
+
+ifeq ($(NVCC_MAJOR),)
+$(error could not detect nvcc version from '$(NVCC)'. Please install/configure nvcc >= 12)
+endif
+ifeq ($(shell [ $(NVCC_MAJOR) -lt 12 ] && echo 1 || echo 0),1)
+$(error nvcc >= 12 required for CUDA build; detected nvcc $(NVCC_MAJOR) at '$(NVCC)'. Use /usr/local/cuda/bin/nvcc)
+endif
 endif
 
 
@@ -68,6 +77,8 @@ SRC_DIRS  := $(shell find $(SRC_DIR) -type d)
 OBJ_DIRS  := $(addprefix $(OBJ_DIR)/,$(SRC_DIRS))
 
 SOURCES_CPP := $(shell find $(SRC_DIR) -name '*.cpp')
+SOURCES_CPP := $(filter-out $(SRC_DIR)/cuda/topdown_cuda_host.cpp,$(SOURCES_CPP))
+
 OBJ_FILES   := $(addprefix $(OBJ_DIR)/, $(SOURCES_CPP:.cpp=.o))
 
 ifeq ($(USE_CUDA),1)
