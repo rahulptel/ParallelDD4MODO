@@ -10,6 +10,5 @@ if [ "$CLEAN_FIRST" = "1" ]; then
 fi
 
 for i in $(seq 3 7); do
-    make -j cpu NUM_OBJS="$i"
-    make -j gpu NUM_OBJS="$i" NVCC="$NVCC_BIN"
+    make -j NUM_OBJS="$i" NVCC="$NVCC_BIN"
 done

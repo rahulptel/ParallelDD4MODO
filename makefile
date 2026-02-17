@@ -11,7 +11,6 @@ PLATFORM   = linux64
 CCC = g++
 NVCC_CANDIDATE := $(firstword $(wildcard /usr/local/cuda/bin/nvcc /usr/local/cuda-*/bin/nvcc))
 NVCC ?= $(if $(NVCC_CANDIDATE),$(NVCC_CANDIDATE),nvcc)
-USE_CUDA ?= 0
 NVCC_MAJOR := $(shell $(NVCC) --version 2>/dev/null | sed -n 's/.*release \([0-9][0-9]*\)\..*/\1/p' | head -n 1)
 
 BOOSTDIR   = $(BASISDIR)/boost
@@ -51,14 +50,11 @@ CFLAGS  += $(CCOPT)
 # number of objective functions
 NUM_OBJS=3
 CFLAGS += -DNOBJS=$(NUM_OBJS)
-
-BUILD_VARIANT = $(if $(filter 1,$(USE_CUDA)),gpu,cpu)
-EXECUTABLE = multiobj_$(BUILD_VARIANT)_nobjs$(NUM_OBJS)
-
-ifeq ($(USE_CUDA),1)
 CFLAGS += -DUSE_CUDA
 CUDAFLAGS = -std=c++14 -O3 -DUSE_CUDA -DNOBJS=$(NUM_OBJS) -I$(BOOSTDIR)/include
 LDFLAGS += -lcudart
+
+EXECUTABLE = multiobj_nobjs$(NUM_OBJS)
 
 ifeq ($(NVCC_MAJOR),)
 $(error could not detect nvcc version from '$(NVCC)'. Please install/configure nvcc >= 12)
@@ -66,43 +62,31 @@ endif
 ifeq ($(shell [ $(NVCC_MAJOR) -lt 12 ] && echo 1 || echo 0),1)
 $(error nvcc >= 12 required for CUDA build; detected nvcc $(NVCC_MAJOR) at '$(NVCC)'. Use /usr/local/cuda/bin/nvcc)
 endif
-endif
 
 
 # ---- COMPILE  ----
 SRC_DIR   := src
-OBJ_DIR   := obj/$(BUILD_VARIANT)_nobjs$(NUM_OBJS)
+OBJ_DIR   := obj/nobjs$(NUM_OBJS)
 
 SRC_DIRS  := $(shell find $(SRC_DIR) -type d)
 OBJ_DIRS  := $(addprefix $(OBJ_DIR)/,$(SRC_DIRS))
 
 SOURCES_CPP := $(shell find $(SRC_DIR) -name '*.cpp')
-SOURCES_CPP := $(filter-out $(SRC_DIR)/cuda/topdown_cuda_host.cpp,$(SOURCES_CPP))
 
 OBJ_FILES   := $(addprefix $(OBJ_DIR)/, $(SOURCES_CPP:.cpp=.o))
-
-ifeq ($(USE_CUDA),1)
 CUDA_SOURCES  := $(shell find $(SRC_DIR) -name '*.cu')
 CUDA_OBJ_FILES := $(addprefix $(OBJ_DIR)/, $(CUDA_SOURCES:.cu=.o))
 OBJ_FILES     += $(CUDA_OBJ_FILES)
 vpath %.cu $(SRC_DIRS)
-endif
 
 vpath %.cpp $(SRC_DIRS)
 
 # ---- TARGETS ----
 
-.PHONY: all cpu gpu both clean
+.PHONY: all universal clean
 
-all: $(EXECUTABLE)
-
-cpu:
-	$(MAKE) USE_CUDA=0 NUM_OBJS=$(NUM_OBJS)
-
-gpu:
-	$(MAKE) USE_CUDA=1 NUM_OBJS=$(NUM_OBJS)
-
-both: cpu gpu
+all: universal
+universal: $(EXECUTABLE)
 
 $(EXECUTABLE): makedir $(OBJ_FILES) 
 	$(CCC) $(OBJ_FILES) $(LDFLAGS) $(PROF) -o $@
@@ -120,4 +104,4 @@ $(OBJ_DIRS):
 
 clean:
 	@rm -rf obj
-	@rm -f multiobj_cpu_nobjs* multiobj_gpu_nobjs* multiobj
+	@rm -f multiobj_nobjs* multiobj

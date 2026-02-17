@@ -21,7 +21,7 @@ inline bool SetPackingStateMinElementSmallestToLargestComp(Node* l, Node* r) {
 //
 // Find pareto frontier using top-down approach on CUDA
 //
-ParetoFrontier* BDDMultiObj::pareto_frontier_topdown_cuda(BDD* bdd, bool maximization, const int problem_type, const int dominance_strategy, MultiObjectiveStats* stats) {
+ParetoFrontier* BDDMultiObj::pareto_frontier_topdown_cuda(BDD* bdd, bool maximization, const int problem_type, const int dominance_strategy, MultiObjectiveStats* stats, std::string* reason) {
     if (stats != NULL) {
         stats->pareto_dominance_time = 0;
         stats->pareto_dominance_filtered = 0;
@@ -29,14 +29,17 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown_cuda(BDD* bdd, bool maximiz
     }
 
     if (topdown_cuda_enumerate == NULL) {
-        cout << "Warning: CUDA top-down enumeration unavailable (binary built without USE_CUDA=1); using CPU." << endl;
-        return BDDMultiObj::pareto_frontier_topdown(bdd, maximization, problem_type, dominance_strategy, stats);
+        if (reason != NULL) {
+            *reason = "CUDA top-down enumeration symbol is unavailable in this binary";
+        }
+        return NULL;
     }
 
-    std::string reason;
-    ParetoFrontier* frontier = topdown_cuda_enumerate(bdd, maximization, problem_type, dominance_strategy, stats, &reason);
-    if (frontier == NULL && !reason.empty()) {
-        cout << "Warning: CUDA top-down enumeration unavailable (" << reason << ")" << endl;
+    std::string local_reason;
+    std::string* active_reason = reason != NULL ? reason : &local_reason;
+    ParetoFrontier* frontier = topdown_cuda_enumerate(bdd, maximization, problem_type, dominance_strategy, stats, active_reason);
+    if (frontier == NULL && reason != NULL && reason->empty()) {
+        *reason = "CUDA top-down enumeration failed";
     }
     return frontier;
 }

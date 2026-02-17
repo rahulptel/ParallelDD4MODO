@@ -7,19 +7,7 @@
 From the project root:
 
 ```bash
-make cpu NUM_OBJS=3
-```
-
-Optional CUDA build (`nvcc >= 12`):
-
-```bash
-make gpu NUM_OBJS=3
-```
-
-Build both variants:
-
-```bash
-make both NUM_OBJS=3
+make NUM_OBJS=3
 ```
 
 Clean build artifacts:
@@ -30,24 +18,21 @@ make clean
 
 ## Run
 
-Executable names follow:
+Executable name:
 
-- `multiobj_cpu_nobjs<NUM_OBJS>`
-- `multiobj_gpu_nobjs<NUM_OBJS>`
+- `multiobj_nobjs<NUM_OBJS>`
 
 CLI:
 
 ```bash
-./multiobj_cpu_nobjs3 <input-file> <problem-type> <preprocess> <method> <appr-S> <appr-T> <dominance>
+./multiobj_nobjs3 <input-file> <problem-type> <preprocess> <method> <appr-S> <appr-T> <dominance> [backend]
 ```
 
-GPU CLI:
+`backend` is optional and can be:
+- `cpu` (default when omitted): use CPU pareto frontier enumeration.
+- `cuda`: force CUDA pareto frontier enumeration.
 
-```bash
-./multiobj_gpu_nobjs3 <input-file> <problem-type> <preprocess> <method> <appr-S> <appr-T> <dominance>
-```
-
-In GPU builds, `method=1` automatically uses CUDA. `method=2` and `method=3` use the CPU implementations.
+When `backend=cuda`, execution fails fast with a nonzero exit code if CUDA is unavailable or if the selected problem/method combination has no CUDA implementation.
 
 ## Data
 

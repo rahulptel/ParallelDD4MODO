@@ -5,6 +5,7 @@
 // General includes
 #include <iostream>
 #include <cstdlib>
+#include <string>
 
 #include "bdd/bdd.hpp"
 #include "bdd/bdd_alg.hpp"
@@ -45,9 +46,14 @@ using namespace std;
 // Main function
 //
 int main(int argc, char* argv[]) {
-    if (argc != 8) {
+    enum Backend {
+        BACKEND_CPU = 0,
+        BACKEND_CUDA = 1
+    };
+
+    auto print_usage = []() {
         cout << '\n';
-        cout << "Usage: multiobj [input file] [problem type] [preprocess?] [method] [appr-S] [appr-T] [dominance]\n";
+        cout << "Usage: multiobj_nobjs<NUM_OBJS> [input file] [problem type] [preprocess?] [method] [appr-S] [appr-T] [dominance] [backend]\n";
         
         cout << "\n\twhere:";
         
@@ -75,8 +81,31 @@ int main(int argc, char* argv[]) {
         cout << "\t\tdominance = 0:  disable state dominance\n";
         cout << "\t\tdominance = 1:  state dominance strategy 1\n";
 
+        cout << "\n";
+        cout << "\t\tbackend = cpu: force CPU pareto frontier enumeration\n";
+        cout << "\t\tbackend = cuda: force CUDA pareto frontier enumeration (method 1 only)\n";
+        cout << "\t\tbackend omitted: defaults to cpu\n";
+
         cout << endl;
+    };
+
+    if (argc != 8 && argc != 9) {
+        print_usage();
         exit(1);
+    }
+
+    Backend backend = BACKEND_CPU;
+    if (argc == 9) {
+        string backend_arg(argv[8]);
+        if (backend_arg == "cpu") {
+            backend = BACKEND_CPU;
+        } else if (backend_arg == "cuda") {
+            backend = BACKEND_CUDA;
+        } else {
+            cout << "Error - backend must be 'cpu' or 'cuda' (received '" << backend_arg << "')." << endl;
+            print_usage();
+            exit(1);
+        }
     }
     
     // Read input
@@ -87,6 +116,11 @@ int main(int argc, char* argv[]) {
     int approx_S = atoi(argv[5]);
     int approx_T = atoi(argv[6]);
     int dominance = atoi(argv[7]);
+
+    if (backend == BACKEND_CUDA && method != 1) {
+        cout << "Error - CUDA backend is unsupported for method " << method << "." << endl;
+        exit(1);
+    }
     
     
     // For statistical analysis
@@ -256,6 +290,10 @@ int main(int argc, char* argv[]) {
 
     // --- TSP ---
     } else if (problem_type == 6) {
+        if (backend == BACKEND_CUDA) {
+            cout << "Error - CUDA backend is unsupported for problem type 6 (TSP)." << endl;
+            exit(1);
+        }
 
         clock_t init_tsp = clock();
 
@@ -315,19 +353,39 @@ int main(int argc, char* argv[]) {
     
     if (method == 1) {
         // -- Optimal BFS algorithm: top-down --
-        pareto_frontier = BDDMultiObj::pareto_frontier_topdown_cuda(bdd, maximization, problem_type, dominance, statsMultiObj);
-        if (pareto_frontier == NULL) {
-            cout << "Error: CUDA enumeration failed in GPU build." << endl;
-            exit(1);
+        if (backend == BACKEND_CUDA) {
+            string cuda_reason;
+            pareto_frontier = BDDMultiObj::pareto_frontier_topdown_cuda(bdd, maximization, problem_type, dominance, statsMultiObj, &cuda_reason);
+            if (pareto_frontier == NULL) {
+                cout << "Error - CUDA backend requested but top-down enumeration failed";
+                if (!cuda_reason.empty()) {
+                    cout << ": " << cuda_reason;
+                }
+                cout << endl;
+                exit(1);
+            }
+        } else {
+            pareto_frontier = BDDMultiObj::pareto_frontier_topdown(bdd, maximization, problem_type, dominance, statsMultiObj);
         }
         
     } else if (method == 2) {
         // -- Optimal BFS algorithm: bottom-up --
+        if (backend == BACKEND_CUDA) {
+            cout << "Error - CUDA backend is unsupported for method 2." << endl;
+            exit(1);
+        }
         pareto_frontier = BDDMultiObj::pareto_frontier_bottomup(bdd, maximization, problem_type, dominance, statsMultiObj);
         
     } else if (method == 3) {
         // -- Dynamic layer cutset --
+        if (backend == BACKEND_CUDA) {
+            cout << "Error - CUDA backend is unsupported for method 3." << endl;
+            exit(1);
+        }
 	    pareto_frontier = BDDMultiObj::pareto_frontier_dynamic_layer_cutset(bdd, maximization, problem_type, dominance, statsMultiObj);
+	} else {
+        cout << "Error - method not recognized" << endl;
+        exit(1);
 	}
 
 	if (pareto_frontier == NULL) {

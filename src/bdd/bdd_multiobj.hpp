@@ -5,6 +5,8 @@
 #ifndef BDD_MULTIOBJ_HPP_
 #define BDD_MULTIOBJ_HPP_
 
+#include <string>
+
 #include "../mdd/mdd.hpp"
 #include "../util/util.hpp"
 #include "bdd.hpp"
@@ -37,7 +39,7 @@ struct BDDMultiObj {
 	static ParetoFrontier* pareto_frontier_topdown(BDD* bdd, bool maximization=true, const int problem_type=-1, const int dominance_strategy=0, MultiObjectiveStats* stats = NULL);
 
     // Find pareto frontier from top-down approach / CUDA
-    static ParetoFrontier* pareto_frontier_topdown_cuda(BDD* bdd, bool maximization=true, const int problem_type=-1, const int dominance_strategy=0, MultiObjectiveStats* stats = NULL);
+    static ParetoFrontier* pareto_frontier_topdown_cuda(BDD* bdd, bool maximization=true, const int problem_type=-1, const int dominance_strategy=0, MultiObjectiveStats* stats = NULL, std::string* reason = NULL);
 
     // Filter layer based on dominance / CUDA
     static void filter_dominance_cuda(BDD* bdd, const int layer, const int problem_type, const int dominance_strategy, MultiObjectiveStats* stats);
