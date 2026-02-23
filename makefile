@@ -14,6 +14,9 @@ NVCC ?= $(if $(NVCC_CANDIDATE),$(NVCC_CANDIDATE),nvcc)
 NVCC_MAJOR := $(shell $(NVCC) --version 2>/dev/null | sed -n 's/.*release \([0-9][0-9]*\)\..*/\1/p' | head -n 1)
 
 BOOSTDIR   = $(BASISDIR)/boost
+ifeq ($(machine), cc)
+	BOOSTDIR = $(BOOST_ROOT)
+endif
 
 GUROBIDIR = /opt/gurobi/$(PLATFORM)
 GUROBIINCDIR = $(GUROBIDIR)/include
