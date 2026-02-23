@@ -14,9 +14,12 @@
 #include "../bdd/bdd_multiobj.hpp"
 
 #include <thrust/device_vector.h>
+#include <thrust/copy.h>
 #include <thrust/fill.h>
+#include <thrust/gather.h>
 #include <thrust/host_vector.h>
 #include <thrust/iterator/constant_iterator.h>
+#include <thrust/iterator/counting_iterator.h>
 #include <thrust/reduce.h>
 #include <thrust/scan.h>
 #include <thrust/sequence.h>
@@ -25,17 +28,30 @@
 namespace {
 
 constexpr int kThreadsPerBlock = 128;
+constexpr int kWarpSize = 32;
 
 struct LayerDominanceContext {
     thrust::device_vector<int>* next_sizes;
     thrust::device_vector<int>* next_offsets;
     thrust::device_vector<ObjType>* next_points;
+    thrust::device_vector<int>* layer_min_weight;
+    thrust::device_vector<int>* layer_single_parent_id;
+    thrust::device_vector<int>* layer_single_parent_arc;
     std::string* reason;
     bool* warned_non_knapsack;
     bool failed;
 };
 
 thread_local LayerDominanceContext* g_layer_dom_ctx = NULL;
+
+struct PackedCudaLayer {
+    thrust::device_vector<int> in_edge_offsets;
+    thrust::device_vector<int> edge_src;
+    thrust::device_vector<ObjType> edge_weights;
+    thrust::device_vector<int> min_weight;
+    thrust::device_vector<int> single_parent_id;
+    thrust::device_vector<int> single_parent_arc;
+};
 
 inline bool set_reason(std::string* reason, const std::string& message) {
     if (reason != NULL) {
@@ -68,24 +84,6 @@ inline bool fail_layer_filter(LayerDominanceContext* ctx, const std::string& mes
     return set_reason(ctx != NULL ? ctx->reason : NULL, message);
 }
 
-inline bool skip_knapsack_parent_pair(Node* node1, Node* node2) {
-    if (node1 == NULL || node2 == NULL) {
-        return false;
-    }
-
-    if (node1->prev[0].size() + node1->prev[1].size() == 1 &&
-        node2->prev[0].size() + node2->prev[1].size() == 1)
-    {
-        if (node1->prev[0].size() > 0 && node2->prev[1].size() > 0 && node1->prev[0][0] == node2->prev[1][0]) {
-            return true;
-        }
-        if (node1->prev[1].size() > 0 && node2->prev[0].size() > 0 && node1->prev[1][0] == node2->prev[0][0]) {
-            return true;
-        }
-    }
-    return false;
-}
-
 __global__ void compute_edge_counts_kernel(const int* edge_src,
                                            const int* prev_offsets,
                                            int* edge_counts,
@@ -98,67 +96,164 @@ __global__ void compute_edge_counts_kernel(const int* edge_src,
     edge_counts[e] = prev_offsets[src + 1] - prev_offsets[src];
 }
 
-__global__ void expand_candidates_kernel(const int* edge_src,
-                                         const int* edge_dst,
-                                         const ObjType* edge_weights,
-                                         const int* edge_offsets,
-                                         const int* edge_counts,
-                                         const int* prev_offsets,
-                                         const ObjType* prev_points,
-                                         int num_edges,
-                                         int* cand_dst,
-                                         ObjType* cand_points) {
-    const int e = blockIdx.x * blockDim.x + threadIdx.x;
-    if (e >= num_edges) {
+__global__ void compute_dst_candidate_counts_kernel(const int* in_edge_offsets,
+                                                    const int* edge_offsets,
+                                                    int next_nodes,
+                                                    int* dst_counts) {
+    const int dst = blockIdx.x * blockDim.x + threadIdx.x;
+    if (dst >= next_nodes) {
+        return;
+    }
+    const int edge_begin = in_edge_offsets[dst];
+    const int edge_end = in_edge_offsets[dst + 1];
+    dst_counts[dst] = edge_offsets[edge_end] - edge_offsets[edge_begin];
+}
+
+__global__ void expand_candidates_points_kernel(const int* edge_src,
+                                                const ObjType* edge_weights,
+                                                const int* edge_offsets,
+                                                const int* edge_counts,
+                                                const int* prev_offsets,
+                                                const ObjType* prev_points,
+                                                int num_edges,
+                                                ObjType* cand_points) {
+    const int global_thread = blockIdx.x * blockDim.x + threadIdx.x;
+    const int global_warp = global_thread / kWarpSize;
+    const int lane = threadIdx.x & (kWarpSize - 1);
+    const int total_warps = (gridDim.x * blockDim.x) / kWarpSize;
+    if (total_warps <= 0) {
         return;
     }
 
-    const int src = edge_src[e];
-    const int dst = edge_dst[e];
-    const int src_begin = prev_offsets[src];
-    const int out_begin = edge_offsets[e];
-    const int count = edge_counts[e];
-    const ObjType* w = edge_weights + (e * NOBJS);
+    for (int e = global_warp; e < num_edges; e += total_warps) {
+        const int src = edge_src[e];
+        const int src_begin = prev_offsets[src];
+        const int out_begin = edge_offsets[e];
+        const int count = edge_counts[e];
+        const ObjType* w = edge_weights + (e * NOBJS);
 
-    for (int k = 0; k < count; ++k) {
-        const int src_idx = src_begin + k;
-        const int out_idx = out_begin + k;
+        for (int k = lane; k < count; k += kWarpSize) {
+            const int src_idx = src_begin + k;
+            const int out_idx = out_begin + k;
 
-        cand_dst[out_idx] = dst;
-        for (int o = 0; o < NOBJS; ++o) {
-            cand_points[out_idx * NOBJS + o] = prev_points[src_idx * NOBJS + o] + w[o];
+            #pragma unroll
+            for (int o = 0; o < NOBJS; ++o) {
+                cand_points[out_idx * NOBJS + o] = prev_points[src_idx * NOBJS + o] + w[o];
+            }
         }
     }
 }
 
-__global__ void gather_points_kernel(const int* order,
-                                     const ObjType* in_points,
-                                     ObjType* out_points,
-                                     int num_points) {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i >= num_points) {
+__global__ void mark_dominated_by_dst_tiled_kernel(const ObjType* points,
+                                                   const int* in_edge_offsets,
+                                                   const int* edge_offsets,
+                                                   int next_nodes,
+                                                   int* alive,
+                                                   int* next_sizes) {
+    const int dst = blockIdx.x;
+    if (dst >= next_nodes) {
+        return;
+    }
+    const int tile_i = blockIdx.y;
+
+    const int edge_begin = in_edge_offsets[dst];
+    const int edge_end = in_edge_offsets[dst + 1];
+    const int begin = edge_offsets[edge_begin];
+    const int end = edge_offsets[edge_end];
+    const int len = end - begin;
+    if (len <= 0) {
         return;
     }
 
-    const int src = order[i];
-    for (int o = 0; o < NOBJS; ++o) {
-        out_points[i * NOBJS + o] = in_points[src * NOBJS + o];
+    const int local_i = tile_i * blockDim.x + threadIdx.x;
+    const bool valid_i = (local_i < len);
+    const int i = begin + local_i;
+
+    ObjType point_i[NOBJS];
+    if (valid_i) {
+        #pragma unroll
+        for (int o = 0; o < NOBJS; ++o) {
+            point_i[o] = points[i * NOBJS + o];
+        }
+    }
+
+    bool dominated = false;
+
+    __shared__ ObjType sh_points[kThreadsPerBlock * NOBJS];
+    for (int j_base = 0; j_base < len; j_base += blockDim.x) {
+        const int j_local = j_base + threadIdx.x;
+        if (j_local < len) {
+            const int j = begin + j_local;
+            #pragma unroll
+            for (int o = 0; o < NOBJS; ++o) {
+                sh_points[threadIdx.x * NOBJS + o] = points[j * NOBJS + o];
+            }
+        }
+        __syncthreads();
+
+        if (valid_i && !dominated) {
+            const int remaining = len - j_base;
+            const int tile_count = (remaining < blockDim.x ? remaining : blockDim.x);
+            for (int jj = 0; jj < tile_count && !dominated; ++jj) {
+                const int local_j = j_base + jj;
+                if (local_j == local_i) {
+                    continue;
+                }
+
+                bool ge_all = true;
+                bool strict = false;
+                #pragma unroll
+                for (int o = 0; o < NOBJS; ++o) {
+                    const ObjType a = sh_points[jj * NOBJS + o];
+                    const ObjType b = point_i[o];
+                    ge_all = ge_all && (a >= b);
+                    strict = strict || (a > b);
+                }
+                if (ge_all && (strict || (local_j < local_i))) {
+                    dominated = true;
+                }
+            }
+        }
+        __syncthreads();
+    }
+
+    const int keep = (valid_i && !dominated) ? 1 : 0;
+    if (valid_i) {
+        alive[i] = keep;
+    }
+
+    __shared__ int live_sh[kThreadsPerBlock];
+    live_sh[threadIdx.x] = keep;
+    __syncthreads();
+    for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+        if (threadIdx.x < offset) {
+            live_sh[threadIdx.x] += live_sh[threadIdx.x + offset];
+        }
+        __syncthreads();
+    }
+    if (threadIdx.x == 0) {
+        atomicAdd(&next_sizes[dst], live_sh[0]);
     }
 }
 
-__global__ void mark_dominated_segments_kernel(const ObjType* points,
-                                               const int* seg_offsets,
-                                               const int* seg_counts,
-                                               int num_segments,
-                                               int* alive) {
-    const int seg = blockIdx.x;
-    if (seg >= num_segments) {
+__global__ void mark_dominated_by_dst_single_block_kernel(const ObjType* points,
+                                                          const int* in_edge_offsets,
+                                                          const int* edge_offsets,
+                                                          int next_nodes,
+                                                          int* alive,
+                                                          int* next_sizes) {
+    const int dst = blockIdx.x;
+    if (dst >= next_nodes) {
         return;
     }
 
-    const int begin = seg_offsets[seg];
-    const int len = seg_counts[seg];
+    const int edge_begin = in_edge_offsets[dst];
+    const int edge_end = in_edge_offsets[dst + 1];
+    const int begin = edge_offsets[edge_begin];
+    const int end = edge_offsets[edge_end];
+    const int len = end - begin;
 
+    int live_local = 0;
     for (int local_i = threadIdx.x; local_i < len; local_i += blockDim.x) {
         const int i = begin + local_i;
         bool dominated = false;
@@ -171,7 +266,7 @@ __global__ void mark_dominated_segments_kernel(const ObjType* points,
             const int j = begin + local_j;
             bool ge_all = true;
             bool strict = false;
-
+            #pragma unroll
             for (int o = 0; o < NOBJS; ++o) {
                 const ObjType a = points[j * NOBJS + o];
                 const ObjType b = points[i * NOBJS + o];
@@ -179,34 +274,28 @@ __global__ void mark_dominated_segments_kernel(const ObjType* points,
                 strict = strict || (a > b);
             }
 
-            // Deterministic tie-break for duplicate points: keep lower local index.
             if (ge_all && (strict || (local_j < local_i))) {
                 dominated = true;
             }
         }
 
-        alive[i] = dominated ? 0 : 1;
-    }
-}
-
-__global__ void write_segment_sizes_kernel(const int* unique_dst,
-                                           const int* seg_offsets,
-                                           const int* seg_counts,
-                                           const int* alive,
-                                           int num_segments,
-                                           int* next_sizes) {
-    const int seg = blockIdx.x * blockDim.x + threadIdx.x;
-    if (seg >= num_segments) {
-        return;
+        const int keep = dominated ? 0 : 1;
+        alive[i] = keep;
+        live_local += keep;
     }
 
-    const int begin = seg_offsets[seg];
-    const int len = seg_counts[seg];
-    int live = 0;
-    for (int i = 0; i < len; ++i) {
-        live += alive[begin + i];
+    __shared__ int live_sh[kThreadsPerBlock];
+    live_sh[threadIdx.x] = live_local;
+    __syncthreads();
+    for (int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+        if (threadIdx.x < offset) {
+            live_sh[threadIdx.x] += live_sh[threadIdx.x + offset];
+        }
+        __syncthreads();
     }
-    next_sizes[unique_dst[seg]] = live;
+    if (threadIdx.x == 0) {
+        next_sizes[dst] = live_sh[0];
+    }
 }
 
 __global__ void scatter_alive_points_kernel(const int* alive,
@@ -289,25 +378,70 @@ __global__ void recompute_sizes_from_keep_kernel(const int* offsets,
     out_sizes[node] = live;
 }
 
+__global__ void build_knapsack_cmp_pairs_kernel(const int* active_nodes,
+                                                int active_size,
+                                                const int* single_parent_id,
+                                                const int* single_parent_arc,
+                                                int* target_nodes,
+                                                int* cmp_node_a,
+                                                int* cmp_node_b) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= active_size - 1) {
+        return;
+    }
+
+    const int node1 = active_nodes[i];
+    const int p1 = single_parent_id[node1];
+    const int a1 = single_parent_arc[node1];
+
+    int cmpA = -1;
+    int cmpB = -1;
+    int cmp_count = 0;
+
+    for (int delta = 1; delta <= 2 && i + delta < active_size; ++delta) {
+        const int node2 = active_nodes[i + delta];
+        const int p2 = single_parent_id[node2];
+        const int a2 = single_parent_arc[node2];
+        const bool skip = (p1 >= 0 && p2 >= 0 && p1 == p2 && a1 != a2);
+        if (skip) {
+            continue;
+        }
+        if (cmp_count == 0) {
+            cmpA = node2;
+        } else if (cmp_count == 1) {
+            cmpB = node2;
+        }
+        ++cmp_count;
+        if (cmp_count >= 2) {
+            break;
+        }
+    }
+
+    target_nodes[i] = node1;
+    cmp_node_a[i] = cmpA;
+    cmp_node_b[i] = cmpB;
+}
+
 inline int ceil_div(int a, int b) {
     return (a + b - 1) / b;
 }
+
+struct IsPositiveInt {
+    __host__ __device__ bool operator()(int x) const { return x > 0; }
+};
 
 inline bool apply_knapsack_state_dominance_cuda(BDD* bdd,
                                                 const int layer,
                                                 MultiObjectiveStats* stats,
                                                 LayerDominanceContext* ctx) {
-    if (bdd == NULL) {
-        return fail_layer_filter(ctx, "BDD pointer is NULL during CUDA dominance filtering");
-    }
     if (ctx == NULL || ctx->next_sizes == NULL || ctx->next_offsets == NULL || ctx->next_points == NULL) {
         return fail_layer_filter(ctx, "Invalid CUDA dominance layer context");
     }
-    if (layer < 0 || layer >= bdd->num_layers) {
-        return fail_layer_filter(ctx, "Invalid layer index during CUDA dominance filtering");
+    if (ctx->layer_min_weight == NULL || ctx->layer_single_parent_id == NULL || ctx->layer_single_parent_arc == NULL) {
+        return fail_layer_filter(ctx, "CUDA knapsack dominance filtering requires packed per-layer metadata");
     }
 
-    const int next_nodes = bdd->layers[layer].size();
+    const int next_nodes = ctx->next_sizes->size();
     if (next_nodes <= 1) {
         return true;
     }
@@ -316,75 +450,54 @@ inline bool apply_knapsack_state_dominance_cuda(BDD* bdd,
     {
         return fail_layer_filter(ctx, "CUDA dominance vectors do not match current layer size");
     }
-
-    thrust::host_vector<int> h_sizes = *(ctx->next_sizes);
-
-    std::vector< std::pair<int, int> > ordered_nodes;
-    ordered_nodes.reserve(next_nodes);
-    for (int i = 0; i < next_nodes; ++i) {
-        if (h_sizes[i] > 0) {
-            ordered_nodes.push_back(std::make_pair(i, bdd->layers[layer][i]->min_weight));
-        }
+    if (ctx->layer_min_weight->size() != static_cast<size_t>(next_nodes) ||
+        ctx->layer_single_parent_id->size() != static_cast<size_t>(next_nodes) ||
+        ctx->layer_single_parent_arc->size() != static_cast<size_t>(next_nodes))
+    {
+        return fail_layer_filter(ctx, "CUDA dominance metadata vectors do not match current layer size");
     }
-    if (ordered_nodes.size() <= 1) {
+
+    thrust::device_vector<int> d_active_nodes(next_nodes, 0);
+    auto active_end = thrust::copy_if(thrust::make_counting_iterator<int>(0),
+                                      thrust::make_counting_iterator<int>(next_nodes),
+                                      ctx->next_sizes->begin(),
+                                      d_active_nodes.begin(),
+                                      IsPositiveInt());
+    const int active_size = active_end - d_active_nodes.begin();
+    if (active_size <= 1) {
         return true;
     }
+    d_active_nodes.resize(active_size);
 
-    std::sort(ordered_nodes.begin(), ordered_nodes.end(),
-              [](const std::pair<int, int>& a, const std::pair<int, int>& b) {
-                  return a.second > b.second;
-              });
+    thrust::device_vector<int> d_keys(active_size, 0);
+    thrust::gather(d_active_nodes.begin(), d_active_nodes.end(), ctx->layer_min_weight->begin(), d_keys.begin());
+    thrust::sort_by_key(d_keys.begin(), d_keys.end(), d_active_nodes.begin(), thrust::greater<int>());
 
-    std::vector<int> h_target_nodes;
-    std::vector<int> h_cmp_node_a;
-    std::vector<int> h_cmp_node_b;
-    h_target_nodes.reserve(ordered_nodes.size());
-    h_cmp_node_a.reserve(ordered_nodes.size());
-    h_cmp_node_b.reserve(ordered_nodes.size());
+    const int num_targets = active_size - 1;
+    thrust::device_vector<int> d_target_nodes(num_targets, 0);
+    thrust::device_vector<int> d_cmp_node_a(num_targets, -1);
+    thrust::device_vector<int> d_cmp_node_b(num_targets, -1);
 
-    for (int i = 0; i < static_cast<int>(ordered_nodes.size()) - 1; ++i) {
-        const int node1_idx = ordered_nodes[i].first;
-        Node* node1 = bdd->layers[layer][node1_idx];
-
-        int cmp_nodes[2] = {-1, -1};
-        int cmp_count = 0;
-
-        const int j_end = std::min<int>(ordered_nodes.size(), i + 3);
-        for (int j = i + 1; j < j_end; ++j) {
-            const int node2_idx = ordered_nodes[j].first;
-            Node* node2 = bdd->layers[layer][node2_idx];
-            if (skip_knapsack_parent_pair(node1, node2)) {
-                continue;
-            }
-            cmp_nodes[cmp_count++] = node2_idx;
-            if (cmp_count >= 2) {
-                break;
-            }
-        }
-
-        if (cmp_count > 0) {
-            h_target_nodes.push_back(node1_idx);
-            h_cmp_node_a.push_back(cmp_nodes[0]);
-            h_cmp_node_b.push_back(cmp_nodes[1]);
-        }
+    build_knapsack_cmp_pairs_kernel<<<ceil_div(num_targets, kThreadsPerBlock), kThreadsPerBlock>>>(
+        thrust::raw_pointer_cast(d_active_nodes.data()),
+        active_size,
+        thrust::raw_pointer_cast(ctx->layer_single_parent_id->data()),
+        thrust::raw_pointer_cast(ctx->layer_single_parent_arc->data()),
+        thrust::raw_pointer_cast(d_target_nodes.data()),
+        thrust::raw_pointer_cast(d_cmp_node_a.data()),
+        thrust::raw_pointer_cast(d_cmp_node_b.data()));
+    if (!sync_kernel("build_knapsack_cmp_pairs_kernel", ctx->reason)) {
+        return false;
     }
 
-    if (h_target_nodes.empty()) {
-        return true;
-    }
-
-    const int old_total = (*(ctx->next_offsets))[next_nodes];
+    const int old_total = ctx->next_points->size() / NOBJS;
     if (old_total <= 0) {
         return true;
     }
-    if (ctx->next_points->size() != static_cast<size_t>(old_total * NOBJS)) {
-        return fail_layer_filter(ctx, "CUDA dominance points size mismatch");
+    const int last_offset = (*(ctx->next_offsets))[next_nodes];
+    if (last_offset != old_total) {
+        return fail_layer_filter(ctx, "CUDA dominance offsets do not match points count");
     }
-
-    thrust::device_vector<int> d_target_nodes = h_target_nodes;
-    thrust::device_vector<int> d_cmp_node_a = h_cmp_node_a;
-    thrust::device_vector<int> d_cmp_node_b = h_cmp_node_b;
-    const int num_targets = h_target_nodes.size();
 
     thrust::device_vector<int> d_keep(old_total, 1);
     mark_dominated_knapsack_pairs_kernel<<<num_targets, kThreadsPerBlock>>>(
@@ -514,6 +627,93 @@ ParetoFrontier* topdown_cuda_enumerate(BDD* bdd,
         return NULL;
     }
 
+    std::vector<PackedCudaLayer> packed_layers;
+    packed_layers.resize(bdd->num_layers);
+
+    const int first_arc_type = maximization ? 1 : 0;
+    const int second_arc_type = maximization ? 0 : 1;
+    const bool pack_knapsack_meta = (problem_type == 1 && dominance_strategy > 0);
+
+    for (int l = 1; l < bdd->num_layers; ++l) {
+        const int next_nodes = bdd->layers[l].size();
+        std::vector<int> h_in_offsets(next_nodes + 1, 0);
+
+        for (int dst_idx = 0; dst_idx < next_nodes; ++dst_idx) {
+            Node* dst_node = bdd->layers[l][dst_idx];
+            int count = 0;
+            const int arc_order[2] = {first_arc_type, second_arc_type};
+            for (int arc_pos = 0; arc_pos < 2; ++arc_pos) {
+                count += dst_node->prev[arc_order[arc_pos]].size();
+            }
+            h_in_offsets[dst_idx + 1] = h_in_offsets[dst_idx] + count;
+        }
+
+        const int num_edges = h_in_offsets[next_nodes];
+        std::vector<int> h_edge_src;
+        std::vector<ObjType> h_edge_weights;
+        h_edge_src.reserve(num_edges);
+        h_edge_weights.reserve(static_cast<size_t>(num_edges) * NOBJS);
+
+        std::vector<int> h_min_weight;
+        std::vector<int> h_parent_id;
+        std::vector<int> h_parent_arc;
+        if (pack_knapsack_meta) {
+            h_min_weight.resize(next_nodes);
+            h_parent_id.resize(next_nodes);
+            h_parent_arc.resize(next_nodes);
+        }
+
+        const int arc_order[2] = {first_arc_type, second_arc_type};
+        for (int dst_idx = 0; dst_idx < next_nodes; ++dst_idx) {
+            Node* dst_node = bdd->layers[l][dst_idx];
+            for (int arc_pos = 0; arc_pos < 2; ++arc_pos) {
+                const int arc_type = arc_order[arc_pos];
+                for (std::vector<Node*>::iterator it = dst_node->prev[arc_type].begin();
+                     it != dst_node->prev[arc_type].end(); ++it) {
+                    Node* src_node = *it;
+                    h_edge_src.push_back(src_node->index);
+
+                    ObjType* w = src_node->weights[arc_type];
+                    for (int o = 0; o < NOBJS; ++o) {
+                        h_edge_weights.push_back(w != NULL ? w[o] : 0);
+                    }
+                }
+            }
+
+            if (pack_knapsack_meta) {
+                h_min_weight[dst_idx] = dst_node->min_weight;
+                const int parents_total = dst_node->prev[0].size() + dst_node->prev[1].size();
+                if (parents_total == 1) {
+                    if (dst_node->prev[0].size() == 1) {
+                        h_parent_id[dst_idx] = dst_node->prev[0][0]->index;
+                        h_parent_arc[dst_idx] = 0;
+                    } else {
+                        h_parent_id[dst_idx] = dst_node->prev[1][0]->index;
+                        h_parent_arc[dst_idx] = 1;
+                    }
+                } else {
+                    h_parent_id[dst_idx] = -1;
+                    h_parent_arc[dst_idx] = -1;
+                }
+            }
+        }
+
+        if (static_cast<int>(h_edge_src.size()) != num_edges ||
+            static_cast<int>(h_edge_weights.size()) != num_edges * NOBJS) {
+            set_reason(reason, "Internal error packing BDD edges for CUDA enumeration");
+            return NULL;
+        }
+
+        packed_layers[l].in_edge_offsets = h_in_offsets;
+        packed_layers[l].edge_src = h_edge_src;
+        packed_layers[l].edge_weights = h_edge_weights;
+        if (pack_knapsack_meta) {
+            packed_layers[l].min_weight = h_min_weight;
+            packed_layers[l].single_parent_id = h_parent_id;
+            packed_layers[l].single_parent_arc = h_parent_arc;
+        }
+    }
+
     thrust::host_vector<int> h_prev_sizes(root_nodes, 0);
     h_prev_sizes[root_idx] = 1;
 
@@ -533,47 +733,18 @@ ParetoFrontier* topdown_cuda_enumerate(BDD* bdd,
             return NULL;
         }
 
-        std::vector<int> h_edge_src;
-        std::vector<int> h_edge_dst;
-        std::vector<ObjType> h_edge_weights;
-
-        const int first_arc_type = maximization ? 1 : 0;
-        const int second_arc_type = maximization ? 0 : 1;
-
-        for (int dst_idx = 0; dst_idx < next_nodes; ++dst_idx) {
-            Node* dst_node = bdd->layers[l][dst_idx];
-            const int arc_order[2] = {first_arc_type, second_arc_type};
-            for (int arc_pos = 0; arc_pos < 2; ++arc_pos) {
-                const int arc_type = arc_order[arc_pos];
-                for (std::vector<Node*>::iterator it = dst_node->prev[arc_type].begin();
-                     it != dst_node->prev[arc_type].end(); ++it) {
-                    Node* src_node = *it;
-                    h_edge_src.push_back(src_node->index);
-                    h_edge_dst.push_back(dst_idx);
-
-                    ObjType* w = src_node->weights[arc_type];
-                    for (int o = 0; o < NOBJS; ++o) {
-                        h_edge_weights.push_back(w != NULL ? w[o] : 0);
-                    }
-                }
-            }
-        }
-
         thrust::device_vector<int> d_next_sizes(next_nodes, 0);
         thrust::device_vector<int> d_next_offsets(next_nodes + 1, 0);
         thrust::device_vector<ObjType> d_next_points;
 
-        const int num_edges = h_edge_src.size();
+        PackedCudaLayer& packed = packed_layers[l];
+        const int num_edges = packed.edge_src.size();
         if (num_edges > 0) {
-            thrust::device_vector<int> d_edge_src = h_edge_src;
-            thrust::device_vector<int> d_edge_dst = h_edge_dst;
-            thrust::device_vector<ObjType> d_edge_weights = h_edge_weights;
-
             thrust::device_vector<int> d_edge_counts(num_edges, 0);
-            thrust::device_vector<int> d_edge_offsets(num_edges, 0);
+            thrust::device_vector<int> d_edge_offsets(num_edges + 1, 0);
 
             compute_edge_counts_kernel<<<ceil_div(num_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
-                thrust::raw_pointer_cast(d_edge_src.data()),
+                thrust::raw_pointer_cast(packed.edge_src.data()),
                 thrust::raw_pointer_cast(d_prev_offsets.data()),
                 thrust::raw_pointer_cast(d_edge_counts.data()),
                 num_edges);
@@ -585,99 +756,84 @@ ParetoFrontier* topdown_cuda_enumerate(BDD* bdd,
             const int last_offset = d_edge_offsets[num_edges - 1];
             const int last_count = d_edge_counts[num_edges - 1];
             const int total_candidates = last_offset + last_count;
+            d_edge_offsets[num_edges] = total_candidates;
 
             if (total_candidates > 0) {
-                thrust::device_vector<int> d_cand_dst(total_candidates, 0);
                 thrust::device_vector<ObjType> d_cand_points(total_candidates * NOBJS, 0);
 
-                expand_candidates_kernel<<<ceil_div(num_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
-                    thrust::raw_pointer_cast(d_edge_src.data()),
-                    thrust::raw_pointer_cast(d_edge_dst.data()),
-                    thrust::raw_pointer_cast(d_edge_weights.data()),
+                expand_candidates_points_kernel<<<ceil_div(num_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
+                    thrust::raw_pointer_cast(packed.edge_src.data()),
+                    thrust::raw_pointer_cast(packed.edge_weights.data()),
                     thrust::raw_pointer_cast(d_edge_offsets.data()),
                     thrust::raw_pointer_cast(d_edge_counts.data()),
                     thrust::raw_pointer_cast(d_prev_offsets.data()),
                     thrust::raw_pointer_cast(d_prev_points.data()),
                     num_edges,
-                    thrust::raw_pointer_cast(d_cand_dst.data()),
                     thrust::raw_pointer_cast(d_cand_points.data()));
-                if (!sync_kernel("expand_candidates_kernel", reason)) {
+                if (!sync_kernel("expand_candidates_points_kernel", reason)) {
                     return NULL;
                 }
 
-                thrust::device_vector<int> d_order(total_candidates, 0);
-                thrust::sequence(d_order.begin(), d_order.end());
-                thrust::sort_by_key(d_cand_dst.begin(), d_cand_dst.end(), d_order.begin());
-
-                thrust::device_vector<ObjType> d_sorted_points(total_candidates * NOBJS, 0);
-                gather_points_kernel<<<ceil_div(total_candidates, kThreadsPerBlock), kThreadsPerBlock>>>(
-                    thrust::raw_pointer_cast(d_order.data()),
-                    thrust::raw_pointer_cast(d_cand_points.data()),
-                    thrust::raw_pointer_cast(d_sorted_points.data()),
-                    total_candidates);
-                if (!sync_kernel("gather_points_kernel", reason)) {
+                thrust::device_vector<int> d_alive(total_candidates, 0);
+                thrust::device_vector<int> d_cand_counts(next_nodes, 0);
+                compute_dst_candidate_counts_kernel<<<ceil_div(next_nodes, kThreadsPerBlock), kThreadsPerBlock>>>(
+                    thrust::raw_pointer_cast(packed.in_edge_offsets.data()),
+                    thrust::raw_pointer_cast(d_edge_offsets.data()),
+                    next_nodes,
+                    thrust::raw_pointer_cast(d_cand_counts.data()));
+                if (!sync_kernel("compute_dst_candidate_counts_kernel", reason)) {
                     return NULL;
                 }
 
-                thrust::device_vector<int> d_unique_dst(total_candidates, 0);
-                thrust::device_vector<int> d_seg_counts(total_candidates, 0);
-                typedef thrust::device_vector<int>::iterator It;
-                thrust::pair<It, It> seg_end = thrust::reduce_by_key(
-                    d_cand_dst.begin(),
-                    d_cand_dst.end(),
-                    thrust::make_constant_iterator(1),
-                    d_unique_dst.begin(),
-                    d_seg_counts.begin());
-
-                const int num_segments = seg_end.first - d_unique_dst.begin();
-                d_unique_dst.resize(num_segments);
-                d_seg_counts.resize(num_segments);
-
-                if (num_segments > 0) {
-                    thrust::device_vector<int> d_seg_offsets(num_segments + 1, 0);
-                    thrust::exclusive_scan(d_seg_counts.begin(), d_seg_counts.end(), d_seg_offsets.begin());
-                    d_seg_offsets[num_segments] = total_candidates;
-
-                    thrust::device_vector<int> d_alive(total_candidates, 0);
-                    mark_dominated_segments_kernel<<<num_segments, kThreadsPerBlock>>>(
-                        thrust::raw_pointer_cast(d_sorted_points.data()),
-                        thrust::raw_pointer_cast(d_seg_offsets.data()),
-                        thrust::raw_pointer_cast(d_seg_counts.data()),
-                        num_segments,
-                        thrust::raw_pointer_cast(d_alive.data()));
-                    if (!sync_kernel("mark_dominated_segments_kernel", reason)) {
-                        return NULL;
-                    }
-
-                    thrust::device_vector<int> d_alive_prefix(total_candidates, 0);
-                    thrust::exclusive_scan(d_alive.begin(), d_alive.end(), d_alive_prefix.begin());
-                    const int total_next = thrust::reduce(d_alive.begin(), d_alive.end(), 0);
-
-                    write_segment_sizes_kernel<<<ceil_div(num_segments, kThreadsPerBlock), kThreadsPerBlock>>>(
-                        thrust::raw_pointer_cast(d_unique_dst.data()),
-                        thrust::raw_pointer_cast(d_seg_offsets.data()),
-                        thrust::raw_pointer_cast(d_seg_counts.data()),
-                        thrust::raw_pointer_cast(d_alive.data()),
-                        num_segments,
-                        thrust::raw_pointer_cast(d_next_sizes.data()));
-                    if (!sync_kernel("write_segment_sizes_kernel", reason)) {
-                        return NULL;
-                    }
-
-                    thrust::exclusive_scan(d_next_sizes.begin(), d_next_sizes.end(), d_next_offsets.begin());
-                    d_next_offsets[next_nodes] = total_next;
-
-                    d_next_points.resize(total_next * NOBJS);
-                    if (total_next > 0) {
-                        scatter_alive_points_kernel<<<ceil_div(total_candidates, kThreadsPerBlock), kThreadsPerBlock>>>(
+                const int max_seg_size = thrust::reduce(d_cand_counts.begin(),
+                                                        d_cand_counts.end(),
+                                                        0,
+                                                        thrust::maximum<int>());
+                if (max_seg_size > 0) {
+                    if (problem_type == 2 && max_seg_size > kThreadsPerBlock) {
+                        const int num_tiles = ceil_div(max_seg_size, kThreadsPerBlock);
+                        dim3 grid(next_nodes, num_tiles);
+                        mark_dominated_by_dst_tiled_kernel<<<grid, kThreadsPerBlock>>>(
+                            thrust::raw_pointer_cast(d_cand_points.data()),
+                            thrust::raw_pointer_cast(packed.in_edge_offsets.data()),
+                            thrust::raw_pointer_cast(d_edge_offsets.data()),
+                            next_nodes,
                             thrust::raw_pointer_cast(d_alive.data()),
-                            thrust::raw_pointer_cast(d_alive_prefix.data()),
-                            thrust::raw_pointer_cast(d_sorted_points.data()),
-                            thrust::raw_pointer_cast(d_next_points.data()),
-                            total_candidates);
-                        if (!sync_kernel("scatter_alive_points_kernel", reason)) {
+                            thrust::raw_pointer_cast(d_next_sizes.data()));
+                        if (!sync_kernel("mark_dominated_by_dst_tiled_kernel", reason)) {
                             return NULL;
                         }
+                    } else {
+                        mark_dominated_by_dst_single_block_kernel<<<next_nodes, kThreadsPerBlock>>>(
+                            thrust::raw_pointer_cast(d_cand_points.data()),
+                            thrust::raw_pointer_cast(packed.in_edge_offsets.data()),
+                            thrust::raw_pointer_cast(d_edge_offsets.data()),
+                            next_nodes,
+                            thrust::raw_pointer_cast(d_alive.data()),
+                            thrust::raw_pointer_cast(d_next_sizes.data()));
+                        if (!sync_kernel("mark_dominated_by_dst_single_block_kernel", reason)) {
+                            return NULL;
+                        }
+                    }
+                }
+
+                thrust::device_vector<int> d_alive_prefix(total_candidates, 0);
+                thrust::exclusive_scan(d_alive.begin(), d_alive.end(), d_alive_prefix.begin());
+                const int total_next = thrust::reduce(d_alive.begin(), d_alive.end(), 0);
+
+                thrust::exclusive_scan(d_next_sizes.begin(), d_next_sizes.end(), d_next_offsets.begin());
+                d_next_offsets[next_nodes] = total_next;
+
+                d_next_points.resize(total_next * NOBJS);
+                if (total_next > 0) {
+                    scatter_alive_points_kernel<<<ceil_div(total_candidates, kThreadsPerBlock), kThreadsPerBlock>>>(
+                        thrust::raw_pointer_cast(d_alive.data()),
+                        thrust::raw_pointer_cast(d_alive_prefix.data()),
+                        thrust::raw_pointer_cast(d_cand_points.data()),
+                        thrust::raw_pointer_cast(d_next_points.data()),
+                        total_candidates);
+                    if (!sync_kernel("scatter_alive_points_kernel", reason)) {
+                        return NULL;
                     }
                 }
             }
@@ -688,6 +844,9 @@ ParetoFrontier* topdown_cuda_enumerate(BDD* bdd,
             dom_ctx.next_sizes = &d_next_sizes;
             dom_ctx.next_offsets = &d_next_offsets;
             dom_ctx.next_points = &d_next_points;
+            dom_ctx.layer_min_weight = pack_knapsack_meta ? &packed.min_weight : NULL;
+            dom_ctx.layer_single_parent_id = pack_knapsack_meta ? &packed.single_parent_id : NULL;
+            dom_ctx.layer_single_parent_arc = pack_knapsack_meta ? &packed.single_parent_arc : NULL;
             dom_ctx.reason = reason;
             dom_ctx.warned_non_knapsack = &warned_non_knapsack_dominance;
             dom_ctx.failed = false;
