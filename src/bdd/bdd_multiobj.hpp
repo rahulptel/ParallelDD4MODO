@@ -23,10 +23,41 @@ struct MultiObjectiveStats {
     int pareto_dominance_filtered;
     // Layer where coupling happened
     int layer_coupling;
+    // Enable lightweight CPU performance aggregation
+    bool cpu_perf_enabled;
+    // Aggregated wall times (seconds) for CPU phases
+    double cpu_expand_td_wall_s;
+    double cpu_expand_bu_wall_s;
+    double cpu_recompute_td_wall_s;
+    double cpu_recompute_bu_wall_s;
+    double cpu_dominance_wall_s;
+    double cpu_cutset_sort_wall_s;
+    double cpu_cutset_convolution_wall_s;
+    double cpu_cutset_partial_merge_wall_s;
+    // Aggregated counters for CPU phases
+    int cpu_layers_td;
+    int cpu_layers_bu;
+    long long cpu_nodes_expanded;
+    int cpu_cutset_size;
 
     // Constructor
     MultiObjectiveStats() 
-    : pareto_dominance_time(0), pareto_dominance_filtered(0), layer_coupling(0)
+    : pareto_dominance_time(0),
+      pareto_dominance_filtered(0),
+      layer_coupling(0),
+      cpu_perf_enabled(false),
+      cpu_expand_td_wall_s(0.0),
+      cpu_expand_bu_wall_s(0.0),
+      cpu_recompute_td_wall_s(0.0),
+      cpu_recompute_bu_wall_s(0.0),
+      cpu_dominance_wall_s(0.0),
+      cpu_cutset_sort_wall_s(0.0),
+      cpu_cutset_convolution_wall_s(0.0),
+      cpu_cutset_partial_merge_wall_s(0.0),
+      cpu_layers_td(0),
+      cpu_layers_bu(0),
+      cpu_nodes_expanded(0),
+      cpu_cutset_size(0)
     { }
 };
 

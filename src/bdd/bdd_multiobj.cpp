@@ -4,6 +4,7 @@
 
 #include "bdd_multiobj.hpp"
 #include "bdd_alg.hpp"
+#include <chrono>
 #ifdef USE_CUDA
 #include "../cuda/topdown_cuda.hpp"
 #include "../cuda/coupled_cuda.hpp"
@@ -55,6 +56,34 @@ inline bool IntPairLargestToSmallestComp(intpair l, intpair r) {
 
 inline bool SetPackingStateMinElementSmallestToLargestComp(Node* l, Node* r) {
     return l->setpack_state.find_first() < r->setpack_state.find_first();     // from smallest to largest
+}
+
+typedef std::chrono::steady_clock WallClock;
+
+inline bool cpu_perf_enabled(const MultiObjectiveStats* stats) {
+    return (stats != NULL && stats->cpu_perf_enabled);
+}
+
+inline double wall_elapsed_s(const WallClock::time_point& start) {
+    return std::chrono::duration_cast<std::chrono::duration<double> >(WallClock::now() - start).count();
+}
+
+inline void reset_cpu_perf_stats(MultiObjectiveStats* stats) {
+    if (stats == NULL) {
+        return;
+    }
+    stats->cpu_expand_td_wall_s = 0.0;
+    stats->cpu_expand_bu_wall_s = 0.0;
+    stats->cpu_recompute_td_wall_s = 0.0;
+    stats->cpu_recompute_bu_wall_s = 0.0;
+    stats->cpu_dominance_wall_s = 0.0;
+    stats->cpu_cutset_sort_wall_s = 0.0;
+    stats->cpu_cutset_convolution_wall_s = 0.0;
+    stats->cpu_cutset_partial_merge_wall_s = 0.0;
+    stats->cpu_layers_td = 0;
+    stats->cpu_layers_bu = 0;
+    stats->cpu_nodes_expanded = 0;
+    stats->cpu_cutset_size = 0;
 }
 
 //
@@ -134,7 +163,9 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown(BDD* bdd, bool maximization
 	// Initialize stats
 	stats->pareto_dominance_time = 0;
 	stats->pareto_dominance_filtered = 0;
+    reset_cpu_perf_stats(stats);
     clock_t init;
+    const bool perf_enabled = cpu_perf_enabled(stats);
 	
 	// Initialize manager
 	ParetoFrontierManager* mgmr = new ParetoFrontierManager(bdd->get_width());
@@ -151,6 +182,7 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown(BDD* bdd, bool maximization
 	if (maximization) {
 		for (int l = 1; l < bdd->num_layers; ++l) {
 //			cout << "\tLayer " << l << " - size = " << bdd->layers[l].size() << '\n';
+            const WallClock::time_point expand_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
 		
             const int layer_size = bdd->layers[l].size();
 #ifdef _OPENMP
@@ -169,20 +201,30 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown(BDD* bdd, bool maximization
                 }
             }
 
-			if (dominance_strategy > 0) {
-                init = clock();
-				BDDMultiObj::filter_dominance(bdd, l, problem_type, dominance_strategy, stats);
-                stats->pareto_dominance_time += clock()-init;
-			}
+				if (dominance_strategy > 0) {
+                    const WallClock::time_point dominance_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
+                    init = clock();
+					BDDMultiObj::filter_dominance(bdd, l, problem_type, dominance_strategy, stats);
+                    stats->pareto_dominance_time += clock()-init;
+                    if (perf_enabled) {
+                        stats->cpu_dominance_wall_s += wall_elapsed_s(dominance_begin);
+                    }
+				}
 				
 			// Deallocate frontier from previous layer
-			for (vector<Node*>::iterator it = bdd->layers[l-1].begin(); it != bdd->layers[l-1].end(); ++it) {
-				recycle_frontier(mgmr, (*it)->pareto_frontier, parallel_mode);
+				for (vector<Node*>::iterator it = bdd->layers[l-1].begin(); it != bdd->layers[l-1].end(); ++it) {
+					recycle_frontier(mgmr, (*it)->pareto_frontier, parallel_mode);
+				}
+                if (perf_enabled) {
+                    stats->cpu_expand_td_wall_s += wall_elapsed_s(expand_begin);
+                    stats->cpu_layers_td += 1;
+                    stats->cpu_nodes_expanded += layer_size;
+                }
 			}
-		}
-	} else {
-		for (int l = 1; l < bdd->num_layers; ++l) {
-			//cout << "\tLayer " << l << " - size = " << bdd->layers[l].size() << '\n';
+		} else {
+			for (int l = 1; l < bdd->num_layers; ++l) {
+				//cout << "\tLayer " << l << " - size = " << bdd->layers[l].size() << '\n';
+                const WallClock::time_point expand_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
 		
             const int layer_size = bdd->layers[l].size();
 #ifdef _OPENMP
@@ -201,22 +243,30 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown(BDD* bdd, bool maximization
                 }
             }
 
-			if (dominance_strategy > 0) {				
-                init = clock();				
-				BDDMultiObj::filter_dominance(bdd, l, problem_type, dominance_strategy, stats);
-				stats->pareto_dominance_time += clock()-init;
-			}
+				if (dominance_strategy > 0) {				
+                    const WallClock::time_point dominance_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
+                    init = clock();				
+					BDDMultiObj::filter_dominance(bdd, l, problem_type, dominance_strategy, stats);
+					stats->pareto_dominance_time += clock()-init;
+                    if (perf_enabled) {
+                        stats->cpu_dominance_wall_s += wall_elapsed_s(dominance_begin);
+                    }
+				}
 
 			// Deallocate frontier from previous layer
-			for (vector<Node*>::iterator it = bdd->layers[l-1].begin(); it != bdd->layers[l-1].end(); ++it) {
-				recycle_frontier(mgmr, (*it)->pareto_frontier, parallel_mode);
-			}
-		}		
-	}
-    
+				for (vector<Node*>::iterator it = bdd->layers[l-1].begin(); it != bdd->layers[l-1].end(); ++it) {
+					recycle_frontier(mgmr, (*it)->pareto_frontier, parallel_mode);
+				}
+                if (perf_enabled) {
+                    stats->cpu_expand_td_wall_s += wall_elapsed_s(expand_begin);
+                    stats->cpu_layers_td += 1;
+                    stats->cpu_nodes_expanded += layer_size;
+                }
+			}		
+		}
+	    
     ParetoFrontier* frontier = bdd->get_terminal()->pareto_frontier;
-    frontier->sort_lexicographic_ascending();
-    
+	    
     // Erase memory
 	delete mgmr;
 	return frontier;
@@ -231,7 +281,8 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_bottomup(BDD* bdd, bool maximizatio
     //cout << "\nComputing Pareto Set...\n";
 	(void)problem_type;
 	(void)dominance_strategy;
-	(void)stats;
+	reset_cpu_perf_stats(stats);
+    const bool perf_enabled = cpu_perf_enabled(stats);
     const int threads = normalized_cpu_threads(cpu_threads);
     const bool parallel_mode = use_parallel_cpu(threads);
 
@@ -248,6 +299,7 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_bottomup(BDD* bdd, bool maximizatio
 		for (int l = bdd->num_layers-2; l >= 0; --l) {
 			// cout << "\tLayer " << l << " - size = " << bdd->layers[l].size();
 			// cout << '\n';
+            const WallClock::time_point expand_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
 
             const int layer_size = bdd->layers[l].size();
 #ifdef _OPENMP
@@ -265,14 +317,20 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_bottomup(BDD* bdd, bool maximizatio
             }
 
 			// Deallocate frontier from previous layer
-			for (vector<Node*>::iterator it = bdd->layers[l+1].begin(); it != bdd->layers[l+1].end(); ++it) {
-				recycle_frontier(mgmr, (*it)->pareto_frontier_bu, parallel_mode);
-			}
-		} 
-	} else {
-		for (int l = bdd->num_layers-2; l >= 0; --l) {
-			// cout << "\tLayer " << l << " - size = " << bdd->layers[l].size();
-			// cout << '\n';
+				for (vector<Node*>::iterator it = bdd->layers[l+1].begin(); it != bdd->layers[l+1].end(); ++it) {
+					recycle_frontier(mgmr, (*it)->pareto_frontier_bu, parallel_mode);
+				}
+                if (perf_enabled) {
+                    stats->cpu_expand_bu_wall_s += wall_elapsed_s(expand_begin);
+                    stats->cpu_layers_bu += 1;
+                    stats->cpu_nodes_expanded += layer_size;
+                }
+			} 
+		} else {
+			for (int l = bdd->num_layers-2; l >= 0; --l) {
+				// cout << "\tLayer " << l << " - size = " << bdd->layers[l].size();
+				// cout << '\n';
+                const WallClock::time_point expand_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
 
             const int layer_size = bdd->layers[l].size();
 #ifdef _OPENMP
@@ -290,14 +348,18 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_bottomup(BDD* bdd, bool maximizatio
             }
 
 			// Deallocate frontier from previous layer
-			for (vector<Node*>::iterator it = bdd->layers[l+1].begin(); it != bdd->layers[l+1].end(); ++it) {
-				recycle_frontier(mgmr, (*it)->pareto_frontier_bu, parallel_mode);
-			}
-		} 
-	}
+				for (vector<Node*>::iterator it = bdd->layers[l+1].begin(); it != bdd->layers[l+1].end(); ++it) {
+					recycle_frontier(mgmr, (*it)->pareto_frontier_bu, parallel_mode);
+				}
+                if (perf_enabled) {
+                    stats->cpu_expand_bu_wall_s += wall_elapsed_s(expand_begin);
+                    stats->cpu_layers_bu += 1;
+                    stats->cpu_nodes_expanded += layer_size;
+                }
+			} 
+		}
 
     ParetoFrontier* frontier = bdd->get_root()->pareto_frontier_bu;
-    frontier->sort_lexicographic_ascending();
 
     // Erase memory
 	delete mgmr;
@@ -558,6 +620,8 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_dynamic_layer_cutset(BDD* bdd, bool
 	ParetoFrontierManager* mgmr = new ParetoFrontierManager(bdd->get_width());
     const int threads = normalized_cpu_threads(cpu_threads);
     const bool parallel_mode = use_parallel_cpu(threads);
+    reset_cpu_perf_stats(stats);
+    const bool perf_enabled = cpu_perf_enabled(stats);
 
 	// Create root and terminal frontiers
 	ObjType sol[NOBJS];
@@ -586,34 +650,58 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_dynamic_layer_cutset(BDD* bdd, bool
 //		if (layer_topdown <= 3) {
 		if (val_topdown <= val_bottomup) {
             // Expand topdown
+            const WallClock::time_point expand_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
 			expand_layer_topdown(bdd, ++layer_topdown, maximization, mgmr, threads);
+            if (perf_enabled) {
+                stats->cpu_expand_td_wall_s += wall_elapsed_s(expand_begin);
+                stats->cpu_layers_td += 1;
+                stats->cpu_nodes_expanded += bdd->layers[layer_topdown].size();
+            }
 			// Recompute layer value
 			val_topdown = 0;
             const int layer_size = bdd->layers[layer_topdown].size();
+            const WallClock::time_point recompute_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
 #ifdef _OPENMP
 #pragma omp parallel for if(parallel_mode) num_threads(threads) reduction(+:val_topdown)
 #endif
 			for (int i = 0; i < layer_size; ++i) {
 				val_topdown += topdown_layer_value(bdd, bdd->layers[layer_topdown][i]);
 			}
+            if (perf_enabled) {
+                stats->cpu_recompute_td_wall_s += wall_elapsed_s(recompute_begin);
+            }
 			//cout << "DOMINANCE: " << dominance_strategy << endl;
             if (dominance_strategy > 0) {
+                const WallClock::time_point dominance_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
                 init = clock();
 				BDDMultiObj::filter_dominance(bdd, layer_topdown, problem_type, dominance_strategy, stats);
                 stats->pareto_dominance_time += clock()-init;
+                if (perf_enabled) {
+                    stats->cpu_dominance_wall_s += wall_elapsed_s(dominance_begin);
+                }
 			}
 		} else {
 			// Expand layer bottomup
+            const WallClock::time_point expand_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
 			expand_layer_bottomup(bdd, --layer_bottomup, maximization, mgmr, threads);
+            if (perf_enabled) {
+                stats->cpu_expand_bu_wall_s += wall_elapsed_s(expand_begin);
+                stats->cpu_layers_bu += 1;
+                stats->cpu_nodes_expanded += bdd->layers[layer_bottomup].size();
+            }
 			// Recompute layer value
 			val_bottomup = 0;
             const int layer_size = bdd->layers[layer_bottomup].size();
+            const WallClock::time_point recompute_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
 #ifdef _OPENMP
 #pragma omp parallel for if(parallel_mode) num_threads(threads) reduction(+:val_bottomup)
 #endif
 			for (int i = 0; i < layer_size; ++i) {
 				val_bottomup += bottomup_layer_value(bdd, bdd->layers[layer_bottomup][i]);
 			}
+            if (perf_enabled) {
+                stats->cpu_recompute_bu_wall_s += wall_elapsed_s(recompute_begin);
+            }
 		}
 
 		// if (layer_topdown != old_topdown && (layer_bottomup - layer_topdown <= 3)) {
@@ -633,9 +721,16 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_dynamic_layer_cutset(BDD* bdd, bool
 
 	vector<Node*>& cutset = bdd->layers[layer_topdown];	
 	//cout << "\tCutset size: " << cutset.size() << endl;
+    if (perf_enabled) {
+        stats->cpu_cutset_size = cutset.size();
+    }
 
 	//cout << "\tsorting..." << endl;
+    const WallClock::time_point cutset_sort_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
 	sort(cutset.begin(), cutset.end(), CompareNode());
+    if (perf_enabled) {
+        stats->cpu_cutset_sort_wall_s += wall_elapsed_s(cutset_sort_begin);
+    }
 
 	// Compute expected frontier size
 	long int expected_size = 0;
@@ -650,6 +745,7 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_dynamic_layer_cutset(BDD* bdd, bool
 
     if (parallel_mode && cutset.size() > 1) {
 #ifdef _OPENMP
+        const WallClock::time_point convolution_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
         vector<ParetoFrontier*> partial(threads, NULL);
 #pragma omp parallel num_threads(threads)
         {
@@ -664,30 +760,43 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_dynamic_layer_cutset(BDD* bdd, bool
                 local_frontier->convolute( *(node->pareto_frontier), *(node->pareto_frontier_bu) );
             }
         }
+        if (perf_enabled) {
+            stats->cpu_cutset_convolution_wall_s += wall_elapsed_s(convolution_begin);
+        }
+        const WallClock::time_point partial_merge_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
         for (int t = 0; t < threads; ++t) {
             if (partial[t] != NULL) {
                 paretoFrontier->merge(*partial[t]);
                 delete partial[t];
             }
         }
+        if (perf_enabled) {
+            stats->cpu_cutset_partial_merge_wall_s += wall_elapsed_s(partial_merge_begin);
+        }
 #else
+        const WallClock::time_point convolution_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
         for (int i = 0; i < cutset.size(); ++i) {
             Node* node = cutset[i];
             assert( node->pareto_frontier != NULL );
             assert( node->pareto_frontier_bu != NULL );
             paretoFrontier->convolute( *(node->pareto_frontier), *(node->pareto_frontier_bu) );
+        }
+        if (perf_enabled) {
+            stats->cpu_cutset_convolution_wall_s += wall_elapsed_s(convolution_begin);
         }
 #endif
     } else {
+        const WallClock::time_point convolution_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
         for (int i = 0; i < cutset.size(); ++i) {
             Node* node = cutset[i];
             assert( node->pareto_frontier != NULL );
             assert( node->pareto_frontier_bu != NULL );
             paretoFrontier->convolute( *(node->pareto_frontier), *(node->pareto_frontier_bu) );
         }
+        if (perf_enabled) {
+            stats->cpu_cutset_convolution_wall_s += wall_elapsed_s(convolution_begin);
+        }
     }
-
-    paretoFrontier->sort_lexicographic_ascending();
     
     // deallocate manager
 	delete mgmr;
@@ -1849,6 +1958,8 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown(MDD* mdd, MultiObjectiveSta
 	// Initialize stats
 	stats->pareto_dominance_time = 0;
 	stats->pareto_dominance_filtered = 0;
+    reset_cpu_perf_stats(stats);
+    const bool perf_enabled = cpu_perf_enabled(stats);
     const int threads = normalized_cpu_threads(cpu_threads);
     const bool parallel_mode = use_parallel_cpu(threads);
 	
@@ -1864,6 +1975,7 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown(MDD* mdd, MultiObjectiveSta
 	// Generate frontiers for each node
 	for (int l = 1; l < mdd->num_layers; ++l) {	
 		cout << "Layer " << l << endl;
+        const WallClock::time_point expand_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
         const int layer_size = mdd->layers[l].size();
 #ifdef _OPENMP
 #pragma omp parallel for if(parallel_mode) num_threads(threads) schedule(dynamic)
@@ -1880,10 +1992,14 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown(MDD* mdd, MultiObjectiveSta
 		for (MDDNode* node : mdd->layers[l-1]) {
 			recycle_frontier(mgmr, node->pareto_frontier, parallel_mode);
 		}
+        if (perf_enabled) {
+            stats->cpu_expand_td_wall_s += wall_elapsed_s(expand_begin);
+            stats->cpu_layers_td += 1;
+            stats->cpu_nodes_expanded += layer_size;
+        }
 	}		
 
     ParetoFrontier* frontier = mdd->get_terminal()->pareto_frontier;
-    frontier->sort_lexicographic_ascending();
 
     // Erase memory
 	delete mgmr;
@@ -1935,6 +2051,8 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_dynamic_layer_cutset(MDD* mdd, Mult
 	ParetoFrontierManager* mgmr = new ParetoFrontierManager(mdd->get_width());
     const int threads = normalized_cpu_threads(cpu_threads);
     const bool parallel_mode = use_parallel_cpu(threads);
+    reset_cpu_perf_stats(stats);
+    const bool perf_enabled = cpu_perf_enabled(stats);
 
 	// Create root and terminal frontiers
 	ObjType sol[NOBJS];
@@ -1962,28 +2080,48 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_dynamic_layer_cutset(MDD* mdd, Mult
 		// cout << "Layer topdown: " << layer_topdown << " - layer bottomup: " << layer_bottomup << endl;
 		if (val_topdown <= val_bottomup) {
             // Expand topdown
+            const WallClock::time_point expand_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
 			expand_layer_topdown(mdd, ++layer_topdown, mgmr, threads);
+            if (perf_enabled) {
+                stats->cpu_expand_td_wall_s += wall_elapsed_s(expand_begin);
+                stats->cpu_layers_td += 1;
+                stats->cpu_nodes_expanded += mdd->layers[layer_topdown].size();
+            }
 			// Recompute layer value
 			val_topdown = 0;
             const int layer_size = mdd->layers[layer_topdown].size();
+            const WallClock::time_point recompute_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
 #ifdef _OPENMP
 #pragma omp parallel for if(parallel_mode) num_threads(threads) reduction(+:val_topdown)
 #endif
 			for (int i = 0; i < layer_size; ++i) {
 				val_topdown += topdown_layer_value(mdd, mdd->layers[layer_topdown][i]);
 			}
+            if (perf_enabled) {
+                stats->cpu_recompute_td_wall_s += wall_elapsed_s(recompute_begin);
+            }
 		} else {
 			// Expand layer bottomup
+            const WallClock::time_point expand_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
 			expand_layer_bottomup(mdd, --layer_bottomup, mgmr, threads);
+            if (perf_enabled) {
+                stats->cpu_expand_bu_wall_s += wall_elapsed_s(expand_begin);
+                stats->cpu_layers_bu += 1;
+                stats->cpu_nodes_expanded += mdd->layers[layer_bottomup].size();
+            }
 			// Recompute layer value
 			val_bottomup = 0;
             const int layer_size = mdd->layers[layer_bottomup].size();
+            const WallClock::time_point recompute_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
 #ifdef _OPENMP
 #pragma omp parallel for if(parallel_mode) num_threads(threads) reduction(+:val_bottomup)
 #endif
 			for (int i = 0; i < layer_size; ++i) {
 				val_bottomup += bottomup_layer_value(mdd, mdd->layers[layer_bottomup][i]);
 			}
+            if (perf_enabled) {
+                stats->cpu_recompute_bu_wall_s += wall_elapsed_s(recompute_begin);
+            }
 		}
 	}
 
@@ -1991,7 +2129,14 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_dynamic_layer_cutset(MDD* mdd, Mult
 	stats->layer_coupling = layer_topdown;
 
 	vector<MDDNode*>& cutset = mdd->layers[layer_topdown];	
+    if (perf_enabled) {
+        stats->cpu_cutset_size = cutset.size();
+    }
+    const WallClock::time_point cutset_sort_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
 	sort(cutset.begin(), cutset.end(), CompareMDDNode());
+    if (perf_enabled) {
+        stats->cpu_cutset_sort_wall_s += wall_elapsed_s(cutset_sort_begin);
+    }
 
 	// Compute expected frontier size
 	long int expected_size = 0;
@@ -2006,6 +2151,7 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_dynamic_layer_cutset(MDD* mdd, Mult
 
     if (parallel_mode && cutset.size() > 1) {
 #ifdef _OPENMP
+        const WallClock::time_point convolution_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
         vector<ParetoFrontier*> partial(threads, NULL);
 #pragma omp parallel num_threads(threads)
         {
@@ -2020,30 +2166,43 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_dynamic_layer_cutset(MDD* mdd, Mult
                 local_frontier->convolute( *(node->pareto_frontier), *(node->pareto_frontier_bu) );
             }
         }
+        if (perf_enabled) {
+            stats->cpu_cutset_convolution_wall_s += wall_elapsed_s(convolution_begin);
+        }
+        const WallClock::time_point partial_merge_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
         for (int t = 0; t < threads; ++t) {
             if (partial[t] != NULL) {
                 paretoFrontier->merge(*partial[t]);
                 delete partial[t];
             }
         }
+        if (perf_enabled) {
+            stats->cpu_cutset_partial_merge_wall_s += wall_elapsed_s(partial_merge_begin);
+        }
 #else
+        const WallClock::time_point convolution_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
         for (int i = 0; i < cutset.size(); ++i) {
             MDDNode* node = cutset[i];
             assert( node->pareto_frontier != NULL );
             assert( node->pareto_frontier_bu != NULL );
             paretoFrontier->convolute( *(node->pareto_frontier), *(node->pareto_frontier_bu) );
+        }
+        if (perf_enabled) {
+            stats->cpu_cutset_convolution_wall_s += wall_elapsed_s(convolution_begin);
         }
 #endif
     } else {
+        const WallClock::time_point convolution_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
         for (int i = 0; i < cutset.size(); ++i) {
             MDDNode* node = cutset[i];
             assert( node->pareto_frontier != NULL );
             assert( node->pareto_frontier_bu != NULL );
             paretoFrontier->convolute( *(node->pareto_frontier), *(node->pareto_frontier_bu) );
         }
+        if (perf_enabled) {
+            stats->cpu_cutset_convolution_wall_s += wall_elapsed_s(convolution_begin);
+        }
     }
-
-    paretoFrontier->sort_lexicographic_ascending();
     
     // deallocate manager
 	delete mgmr;

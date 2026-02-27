@@ -67,6 +67,19 @@ Frontier saving options:
 - If both are passed, `--frontier-out <path>` is used.
 - Optional arguments can be provided in any order.
 
+Performance logging:
+- `--perf-log`: emit aggregated phase timings and counters to `stderr` (stdout format remains unchanged).
+- Logged wall-clock and CPU-time values are both reported.
+- Enumeration timing excludes final lexicographic sorting (sorting is treated as post-processing).
+
+Stdout format (always 3 lines):
+- line 1: number of Pareto solutions.
+- line 2: CPU total time (`compile_cpu_s + enum_cpu_s`) for backward compatibility.
+- line 3: tab-separated stats with existing fields unchanged in order, followed by appended wall-time fields:
+  - `compile_wall_s`
+  - `enum_wall_s` (excludes final lexicographic sort)
+  - `total_wall_s_end_to_end` (includes post-processing such as sort and optional frontier save; measured from run start to stdout reporting)
+
 When backend is `gpu`, execution fails fast with a nonzero exit code if CUDA is unavailable or if the selected problem/method combination has no GPU implementation.
 
 ## Data

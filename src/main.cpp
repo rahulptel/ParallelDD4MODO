@@ -9,6 +9,8 @@
 #include <cstdio>
 #include <cerrno>
 #include <climits>
+#include <chrono>
+#include <iomanip>
 
 #include "bdd/bdd.hpp"
 #include "bdd/bdd_alg.hpp"
@@ -193,6 +195,50 @@ static bool write_frontier_gzip_csv(const ParetoFrontier *frontier, const int pr
     return true;
 }
 
+static void print_perf_log(const string &input_path,
+                           const int problem_type,
+                           const int method,
+                           const string &backend_name,
+                           const int cpu_threads,
+                           const MultiObjectiveStats *stats,
+                           const double compile_wall_s,
+                           const double enum_wall_s,
+                           const double total_wall_s,
+                           const double compile_cpu_s,
+                           const double enum_cpu_s,
+                           const bool postprocess_sort_applied)
+{
+    cerr << fixed << setprecision(6);
+    cerr << "[perf] input=" << input_path
+         << " problem_type=" << problem_type
+         << " method=" << method
+         << " backend=" << backend_name
+         << " cpu_threads=" << cpu_threads << '\n';
+    cerr << "[perf] wall_s compile=" << compile_wall_s
+         << " enum=" << enum_wall_s
+         << " total=" << total_wall_s
+         << " postprocess_sort=" << (postprocess_sort_applied ? "applied" : "skipped") << '\n';
+    cerr << "[perf] cpu_s compile=" << compile_cpu_s
+         << " enum=" << enum_cpu_s << '\n';
+    if (stats != NULL)
+    {
+        cerr << "[perf] phases_s expand_td=" << stats->cpu_expand_td_wall_s
+             << " expand_bu=" << stats->cpu_expand_bu_wall_s
+             << " recompute_td=" << stats->cpu_recompute_td_wall_s
+             << " recompute_bu=" << stats->cpu_recompute_bu_wall_s
+             << " dominance=" << stats->cpu_dominance_wall_s
+             << " cutset_sort=" << stats->cpu_cutset_sort_wall_s
+             << " cutset_convolution=" << stats->cpu_cutset_convolution_wall_s
+             << " cutset_partial_merge=" << stats->cpu_cutset_partial_merge_wall_s << '\n';
+        cerr << "[perf] counters layers_td=" << stats->cpu_layers_td
+             << " layers_bu=" << stats->cpu_layers_bu
+             << " nodes_expanded=" << stats->cpu_nodes_expanded
+             << " cutset_size=" << stats->cpu_cutset_size
+             << " dominance_filtered=" << stats->pareto_dominance_filtered
+             << " dominance_cpu_s=" << ((double)stats->pareto_dominance_time) / CLOCKS_PER_SEC << '\n';
+    }
+}
+
 //
 // Main function
 //
@@ -257,6 +303,7 @@ int main(int argc, char *argv[])
         cout << "\n";
         cout << "\t\t--save-frontier: save Pareto frontier to <input_stem>.frontier.csv.gz\n";
         cout << "\t\t--frontier-out <path>: save Pareto frontier to explicit gzip CSV path\n";
+        cout << "\t\t--perf-log: print aggregated CPU performance diagnostics to stderr\n";
         cout << "\t\toptional arguments can be provided in any order\n";
 
         cout << endl;
@@ -288,6 +335,7 @@ int main(int argc, char *argv[])
 
     bool save_frontier = false;
     string frontier_out_path;
+    bool perf_log = false;
 
     for (int i = 8; i < argc; ++i)
     {
@@ -468,6 +516,10 @@ int main(int argc, char *argv[])
             }
             save_frontier = true;
         }
+        else if (token == "--perf-log")
+        {
+            perf_log = true;
+        }
         else
         {
             int parsed_numeric = 0;
@@ -541,6 +593,11 @@ int main(int argc, char *argv[])
         exit(1);
     }
 
+    typedef std::chrono::steady_clock WallClock;
+    const WallClock::time_point run_wall_begin = WallClock::now();
+    double compilation_wall_s = 0.0;
+    double pareto_enum_wall_s = 0.0;
+
     // For statistical analysis
     Stats timers;
     int bdd_compilation_time = timers.register_name("BDD compilation time");
@@ -554,6 +611,7 @@ int main(int argc, char *argv[])
     // Read problem instance and construct BDD
     BDD *bdd = NULL;
     vector<vector<int>> obj_coeffs;
+    const WallClock::time_point compilation_wall_begin = WallClock::now();
     timers.start_timer(bdd_compilation_time);
 
     // --- Knapsack ---
@@ -667,13 +725,12 @@ int main(int argc, char *argv[])
     }
     else if (problem_type == 4)
     {
-        clock_t init_tsp = clock();
-
         // Read instance
         TSPInstance inst;
         inst.read(argv[1]);
 
         // Construct MDD
+        const WallClock::time_point compilation_tsp_wall_begin = WallClock::now();
         clock_t compilation_tsp = clock();
 
         MDDTSPConstructor mddCons(&inst);
@@ -681,11 +738,14 @@ int main(int argc, char *argv[])
         assert(mdd != NULL);
 
         compilation_tsp = clock() - compilation_tsp;
+        compilation_wall_s = std::chrono::duration_cast<std::chrono::duration<double> >(WallClock::now() - compilation_tsp_wall_begin).count();
 
-        // Generate frontier
-        clock_t frontier_tsp = clock();
+        // Generate frontier (timed region excludes final lexicographic sort)
+        const WallClock::time_point pareto_tsp_wall_begin = WallClock::now();
+        clock_t pareto_tsp_cpu = clock();
 
         MultiObjectiveStats *statsMultiObj = new MultiObjectiveStats;
+        statsMultiObj->cpu_perf_enabled = (perf_log && backend == BACKEND_CPU);
         ParetoFrontier *pareto_frontier = NULL;
 
         if (method == 1) { // Top-down
@@ -718,8 +778,11 @@ int main(int argc, char *argv[])
             cout << "Error - method " << method << " not valid for TSP" << endl;
             exit(1);
         }
+        pareto_tsp_cpu = clock() - pareto_tsp_cpu;
+        pareto_enum_wall_s = std::chrono::duration_cast<std::chrono::duration<double> >(WallClock::now() - pareto_tsp_wall_begin).count();
 
         assert(pareto_frontier != NULL);
+        pareto_frontier->sort_lexicographic_ascending();
 
         if (save_frontier)
         {
@@ -736,13 +799,35 @@ int main(int argc, char *argv[])
             }
         }
 
-        frontier_tsp = clock() - frontier_tsp;
+        const double total_wall_s_end_to_end =
+            std::chrono::duration_cast<std::chrono::duration<double> >(WallClock::now() - run_wall_begin).count();
 
         cout << pareto_frontier->get_num_sols() << endl;
-        cout << (double)(compilation_tsp + frontier_tsp) / CLOCKS_PER_SEC << endl;
+        cout << (double)(compilation_tsp + pareto_tsp_cpu) / CLOCKS_PER_SEC << endl;
         cout << (double)compilation_tsp / CLOCKS_PER_SEC;
-        cout << "\t" << frontier_tsp / CLOCKS_PER_SEC;
+        cout << "\t" << pareto_tsp_cpu / CLOCKS_PER_SEC;
+        cout << "\t" << compilation_wall_s;
+        cout << "\t" << pareto_enum_wall_s;
+        cout << "\t" << total_wall_s_end_to_end;
         cout << endl;
+
+        if (perf_log)
+        {
+            const double total_wall_s = total_wall_s_end_to_end;
+            const string backend_name = (backend == BACKEND_GPU ? "gpu" : "cpu");
+            print_perf_log(argv[1],
+                           problem_type,
+                           method,
+                           backend_name,
+                           cpu_threads,
+                           statsMultiObj,
+                           compilation_wall_s,
+                           pareto_enum_wall_s,
+                           total_wall_s,
+                           ((double)compilation_tsp) / CLOCKS_PER_SEC,
+                           ((double)pareto_tsp_cpu) / CLOCKS_PER_SEC,
+                           true);
+        }
 
         return 0;
     }
@@ -753,6 +838,7 @@ int main(int argc, char *argv[])
     }
 
     timers.end_timer(bdd_compilation_time);
+    compilation_wall_s = std::chrono::duration_cast<std::chrono::duration<double> >(WallClock::now() - compilation_wall_begin).count();
 
     // cout << "\nBDD Info:\n";
     // cout << "\tOriginal width: " << original_width << endl;
@@ -763,10 +849,12 @@ int main(int argc, char *argv[])
 
     // Initialize multiobjective stats
     MultiObjectiveStats *statsMultiObj = new MultiObjectiveStats;
+    statsMultiObj->cpu_perf_enabled = (perf_log && backend == BACKEND_CPU);
 
     // Compute pareto frontier based on methodology
     // cout << "\n\nComputing pareto frontier..." << endl;
     ParetoFrontier *pareto_frontier = NULL;
+    const WallClock::time_point pareto_wall_begin = WallClock::now();
     timers.start_timer(pareto_time);
 
     if (method == 1)
@@ -823,6 +911,10 @@ int main(int argc, char *argv[])
         cout << "\nError - pareto frontier not computed" << endl;
         exit(1);
     }
+    timers.end_timer(pareto_time);
+    pareto_enum_wall_s = std::chrono::duration_cast<std::chrono::duration<double> >(WallClock::now() - pareto_wall_begin).count();
+
+    pareto_frontier->sort_lexicographic_ascending();
 
     if (save_frontier)
     {
@@ -839,9 +931,8 @@ int main(int argc, char *argv[])
         }
     }
 
-    timers.end_timer(pareto_time);
-
     double total_time = (timers.get_time(bdd_compilation_time) + timers.get_time(approx_time) + timers.get_time(pareto_time));
+    (void)total_time;
 
     // cout << "\nPareto frontier: " << endl;
     // cout << "\tNumber of solutions: " << pareto_frontier->get_num_sols() << endl;
@@ -875,6 +966,9 @@ int main(int argc, char *argv[])
     // stats << endl;
     // stats.close();
 
+    const double total_wall_s_end_to_end =
+        std::chrono::duration_cast<std::chrono::duration<double> >(WallClock::now() - run_wall_begin).count();
+
     cout << pareto_frontier->get_num_sols() << endl;
     cout << (timers.get_time(bdd_compilation_time) + timers.get_time(pareto_time)) << endl;
 
@@ -889,7 +983,28 @@ int main(int argc, char *argv[])
     cout << "\t" << statsMultiObj->layer_coupling;
     cout << "\t" << statsMultiObj->pareto_dominance_filtered;
     cout << "\t" << ((double)statsMultiObj->pareto_dominance_time) / CLOCKS_PER_SEC;
+    cout << "\t" << compilation_wall_s;
+    cout << "\t" << pareto_enum_wall_s;
+    cout << "\t" << total_wall_s_end_to_end;
     cout << endl;
+
+    if (perf_log)
+    {
+        const double total_wall_s = total_wall_s_end_to_end;
+        const string backend_name = (backend == BACKEND_GPU ? "gpu" : "cpu");
+        print_perf_log(argv[1],
+                       problem_type,
+                       method,
+                       backend_name,
+                       cpu_threads,
+                       statsMultiObj,
+                       compilation_wall_s,
+                       pareto_enum_wall_s,
+                       total_wall_s,
+                       timers.get_time(bdd_compilation_time),
+                       timers.get_time(pareto_time),
+                       true);
+    }
 
     return 0;
 }
