@@ -1,12 +1,13 @@
 #!/bin/bash
 
 #  You have to replace Your_account_name below with the name of your account:
-#SBATCH -A Your_account_name
+# SBATCH_ACCOUNT set in bashrc
 
 # Here you should provide the sbatch arguments to be used in all jobs in this farm
 # At the very least, it has to contain the runtime switch (either -t or --time):
-#SBATCH -t 0-00:20
+#SBATCH -t 0-03:00
 #SBATCH --mem=17000M
+#SBATCH --cpus-per-task=1
 
 # If WHOLE_NODE=1 in config.h file, the following sbatch arguments will be automatically added:
 # --nodes=1 --cpus-per-task=$NWHOLE --exclusive , where $NWHOLE is also defined in config.h
@@ -16,6 +17,8 @@
 #=====================================================================
 
 module load meta-farm
+module load boost
+module load cuda
 
 if (($WHOLE_NODE==1))
  then
