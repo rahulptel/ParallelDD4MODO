@@ -47,6 +47,31 @@ inline bool sync_kernel(const char* where, std::string* reason) {
     return cuda_ok(cudaDeviceSynchronize(), where, reason);
 }
 
+inline bool sample_gpu_memory_peak(std::string* reason,
+                                   const long long baseline_used_bytes,
+                                   long long* peak_used_bytes,
+                                   long long* peak_reserved_bytes) {
+    size_t free_bytes = 0;
+    size_t total_bytes = 0;
+    if (!cuda_ok(cudaMemGetInfo(&free_bytes, &total_bytes), "cudaMemGetInfo", reason)) {
+        return false;
+    }
+
+    const long long used_bytes = static_cast<long long>(total_bytes) - static_cast<long long>(free_bytes);
+    if (peak_reserved_bytes != NULL && used_bytes > *peak_reserved_bytes) {
+        *peak_reserved_bytes = used_bytes;
+    }
+
+    long long delta_used_bytes = used_bytes - baseline_used_bytes;
+    if (delta_used_bytes < 0) {
+        delta_used_bytes = 0;
+    }
+    if (peak_used_bytes != NULL && delta_used_bytes > *peak_used_bytes) {
+        *peak_used_bytes = delta_used_bytes;
+    }
+    return true;
+}
+
 __host__ __device__ inline int ceil_div(int a, int b) { return (a + b - 1) / b; }
 
 // ---------------------------------------------------------------
@@ -552,7 +577,10 @@ bool expand_layer_cuda(
     std::string* reason,
     int kernel_version,
     long long* total_candidates_out,
-    long long* total_next_out)
+    long long* total_next_out,
+    long long* gpu_mem_baseline_used_bytes,
+    long long* gpu_mem_peak_used_bytes,
+    long long* gpu_mem_peak_reserved_bytes)
 {
     if (total_candidates_out != NULL) {
         *total_candidates_out = 0;
@@ -609,6 +637,19 @@ bool expand_layer_cuda(
         num_edges,
         thrust::raw_pointer_cast(d_cand.data()));
     if (!sync_kernel("expand_cand", reason)) return false;
+    // Primary peak checkpoint: candidate points are fully materialized and not yet compacted by dominance.
+    if (gpu_mem_baseline_used_bytes != NULL &&
+        gpu_mem_peak_used_bytes != NULL &&
+        gpu_mem_peak_reserved_bytes != NULL)
+    {
+        if (!sample_gpu_memory_peak(reason,
+                                    *gpu_mem_baseline_used_bytes,
+                                    gpu_mem_peak_used_bytes,
+                                    gpu_mem_peak_reserved_bytes))
+        {
+            return false;
+        }
+    }
 
     // Segmented sort of candidates by First Objective (Descending)
     // To do segmented sort with Thrust efficiently when we only have segment offsets 
@@ -875,7 +916,8 @@ ParetoFrontier* coupled_cuda_enumerate(MDD* mdd,
                     nn,
                     d_td_offsets, d_td_points,
                     d_ns, d_no, d_np, reason, kernel_version,
-                    &layer_candidates, &layer_survivors))
+                    &layer_candidates, &layer_survivors,
+                    NULL, NULL, NULL))
                 return NULL;
             t1 = clock();
             double td_elapsed = (double)(t1-t0)/CLOCKS_PER_SEC;
@@ -912,7 +954,8 @@ ParetoFrontier* coupled_cuda_enumerate(MDD* mdd,
                     nn,
                     d_bu_offsets, d_bu_points,
                     d_ns, d_no, d_np, reason, kernel_version,
-                    &layer_candidates, &layer_survivors))
+                    &layer_candidates, &layer_survivors,
+                    NULL, NULL, NULL))
                 return NULL;
             t1 = clock();
             double bu_elapsed = (double)(t1-t0)/CLOCKS_PER_SEC;

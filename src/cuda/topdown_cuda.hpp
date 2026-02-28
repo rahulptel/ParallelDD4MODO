@@ -88,6 +88,9 @@ bool expand_layer_cuda(
     std::string* reason,
     int kernel_version = 3,
     long long* total_candidates_out = NULL,
-    long long* total_next_out = NULL);
+    long long* total_next_out = NULL,
+    long long* gpu_mem_baseline_used_bytes = NULL,
+    long long* gpu_mem_peak_used_bytes = NULL,
+    long long* gpu_mem_peak_reserved_bytes = NULL);
 
 #endif

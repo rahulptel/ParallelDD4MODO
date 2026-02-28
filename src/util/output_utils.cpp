@@ -184,6 +184,8 @@ bool write_stats_jsonl(const string &out_path,
     const double kernel_expand_td_s = stats != NULL ? stats->kernel_expand_td_s : 0.0;
     const double kernel_dominance_s = stats != NULL ? stats->kernel_dominance_s : 0.0;
     const double kernel_total_s = stats != NULL ? stats->kernel_total_s : 0.0;
+    const long long gpu_mem_peak_used_bytes = stats != NULL ? stats->gpu_mem_peak_used_bytes : 0;
+    const long long gpu_mem_peak_reserved_bytes = stats != NULL ? stats->gpu_mem_peak_reserved_bytes : 0;
     const int layer_coupling = stats != NULL ? stats->layer_coupling : 0;
     const int dominance_filtered_total = stats != NULL ? stats->dominance_filtered_total : 0;
     const long long work_candidates_total = stats != NULL ? stats->work_candidates_total : 0;
@@ -225,6 +227,13 @@ bool write_stats_jsonl(const string &out_path,
     out << "\"kernel_expand_td_s\":" << kernel_expand_td_s << ",";
     out << "\"kernel_dominance_s\":" << kernel_dominance_s << ",";
     out << "\"kernel_total_s\":" << kernel_total_s;
+    out << "}";
+    out << "},";
+
+    out << "\"memory\":{";
+    out << "\"gpu\":{";
+    out << "\"gpu_mem_peak_used_bytes\":" << gpu_mem_peak_used_bytes << ",";
+    out << "\"gpu_mem_peak_reserved_bytes\":" << gpu_mem_peak_reserved_bytes;
     out << "}";
     out << "},";
 

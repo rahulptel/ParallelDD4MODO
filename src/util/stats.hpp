@@ -52,6 +52,10 @@ struct EnumerationStats {
     double kernel_expand_td_s;
     double kernel_dominance_s;
     double kernel_total_s;
+    // Peak GPU memory usage (bytes) sampled with cudaMemGetInfo.
+    // used_bytes is baseline-adjusted for this run; reserved_bytes is device-wide used memory.
+    long long gpu_mem_peak_used_bytes;
+    long long gpu_mem_peak_reserved_bytes;
 
     // Method-agnostic work counters
     long long work_candidates_total;
@@ -91,6 +95,8 @@ struct EnumerationStats {
           kernel_expand_td_s(0.0),
           kernel_dominance_s(0.0),
           kernel_total_s(0.0),
+          gpu_mem_peak_used_bytes(0),
+          gpu_mem_peak_reserved_bytes(0),
           work_candidates_total(0),
           work_frontier_survivors_total(0),
           work_frontier_peak_points(0),

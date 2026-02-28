@@ -61,6 +61,8 @@ inline void reset_cpu_perf_stats(EnumerationStats* stats) {
     stats->kernel_expand_td_s = 0.0;
     stats->kernel_dominance_s = 0.0;
     stats->kernel_total_s = 0.0;
+    stats->gpu_mem_peak_used_bytes = 0;
+    stats->gpu_mem_peak_reserved_bytes = 0;
     stats->work_candidates_total = 0;
     stats->work_frontier_survivors_total = 0;
     stats->work_frontier_peak_points = 0;

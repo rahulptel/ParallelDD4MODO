@@ -78,6 +78,44 @@ inline bool sync_kernel(const char* where, std::string* reason) {
     return cuda_ok(cudaDeviceSynchronize(), where, reason);
 }
 
+inline bool capture_gpu_memory_used(std::string* reason, long long* used_bytes_out) {
+    if (used_bytes_out == NULL) {
+        return set_reason(reason, "capture_gpu_memory_used: output pointer is NULL");
+    }
+    size_t free_bytes = 0;
+    size_t total_bytes = 0;
+    if (!cuda_ok(cudaMemGetInfo(&free_bytes, &total_bytes), "cudaMemGetInfo", reason)) {
+        return false;
+    }
+    *used_bytes_out = static_cast<long long>(total_bytes) - static_cast<long long>(free_bytes);
+    return true;
+}
+
+inline bool sample_gpu_memory_peak(std::string* reason,
+                                   const long long baseline_used_bytes,
+                                   long long* peak_used_bytes,
+                                   long long* peak_reserved_bytes) {
+    size_t free_bytes = 0;
+    size_t total_bytes = 0;
+    if (!cuda_ok(cudaMemGetInfo(&free_bytes, &total_bytes), "cudaMemGetInfo", reason)) {
+        return false;
+    }
+
+    const long long used_bytes = static_cast<long long>(total_bytes) - static_cast<long long>(free_bytes);
+    if (peak_reserved_bytes != NULL && used_bytes > *peak_reserved_bytes) {
+        *peak_reserved_bytes = used_bytes;
+    }
+
+    long long delta_used_bytes = used_bytes - baseline_used_bytes;
+    if (delta_used_bytes < 0) {
+        delta_used_bytes = 0;
+    }
+    if (peak_used_bytes != NULL && delta_used_bytes > *peak_used_bytes) {
+        *peak_used_bytes = delta_used_bytes;
+    }
+    return true;
+}
+
 class ScopedCudaEventTimer {
 public:
     ScopedCudaEventTimer(const char* where, std::string* reason)
@@ -823,6 +861,15 @@ ParetoFrontier* topdown_cuda_enumerate(BDD* bdd,
     if (!cuda_ok(cudaSetDevice(0), "cudaSetDevice", reason)) {
         return NULL;
     }
+    long long gpu_mem_baseline_used_bytes = 0;
+    long long gpu_mem_peak_used_bytes = 0;
+    long long gpu_mem_peak_reserved_bytes = 0;
+    if (stats != NULL) {
+        if (!capture_gpu_memory_used(reason, &gpu_mem_baseline_used_bytes)) {
+            return NULL;
+        }
+        gpu_mem_peak_reserved_bytes = gpu_mem_baseline_used_bytes;
+    }
 
     const int root_idx = bdd->get_root()->index;
     const int root_nodes = bdd->layers[0].size();
@@ -920,6 +967,9 @@ ParetoFrontier* topdown_cuda_enumerate(BDD* bdd,
     }
     if (stats != NULL) {
         stats->wall_pack_transfer_s += std::chrono::duration_cast<std::chrono::duration<double> >(std::chrono::steady_clock::now() - pack_begin).count();
+        if (!sample_gpu_memory_peak(reason, gpu_mem_baseline_used_bytes, &gpu_mem_peak_used_bytes, &gpu_mem_peak_reserved_bytes)) {
+            return NULL;
+        }
     }
 
     thrust::host_vector<int> h_prev_sizes(root_nodes, 0);
@@ -998,6 +1048,12 @@ ParetoFrontier* topdown_cuda_enumerate(BDD* bdd,
                 }
                 if (!expand_timer.finish_and_add(stats != NULL ? &stats->kernel_expand_td_s : NULL,
                                                  "cudaEventElapsedTime/expand_candidates_points_kernel")) {
+                    return NULL;
+                }
+                // Primary peak checkpoint: candidate points are fully materialized before dominance compaction.
+                if (stats != NULL &&
+                    !sample_gpu_memory_peak(reason, gpu_mem_baseline_used_bytes, &gpu_mem_peak_used_bytes, &gpu_mem_peak_reserved_bytes))
+                {
                     return NULL;
                 }
 
@@ -1180,6 +1236,9 @@ ParetoFrontier* topdown_cuda_enumerate(BDD* bdd,
             stats->work_frontier_survivors_total += layer_survivors;
             stats->work_frontier_peak_points = std::max(stats->work_frontier_peak_points, layer_survivors);
             stats->wall_expand_td_s += std::chrono::duration_cast<std::chrono::duration<double> >(std::chrono::steady_clock::now() - layer_begin).count();
+            if (!sample_gpu_memory_peak(reason, gpu_mem_baseline_used_bytes, &gpu_mem_peak_used_bytes, &gpu_mem_peak_reserved_bytes)) {
+                return NULL;
+            }
         }
 
         d_prev_offsets.swap(d_next_offsets);
@@ -1210,6 +1269,11 @@ ParetoFrontier* topdown_cuda_enumerate(BDD* bdd,
         reason->clear();
     }
     if (stats != NULL) {
+        if (!sample_gpu_memory_peak(reason, gpu_mem_baseline_used_bytes, &gpu_mem_peak_used_bytes, &gpu_mem_peak_reserved_bytes)) {
+            return NULL;
+        }
+        stats->gpu_mem_peak_used_bytes = gpu_mem_peak_used_bytes;
+        stats->gpu_mem_peak_reserved_bytes = gpu_mem_peak_reserved_bytes;
         stats->kernel_total_s = stats->kernel_expand_td_s + stats->kernel_dominance_s;
     }
     return frontier;
@@ -1227,6 +1291,13 @@ ParetoFrontier* topdown_mdd_cuda_enumerate(MDD* mdd,
     if (mdd->num_layers <= 0) { set_reason(reason, "MDD has zero layers"); return NULL; }
     if (!topdown_cuda_available(reason)) return NULL;
     if (!cuda_ok(cudaSetDevice(0), "cudaSetDevice", reason)) return NULL;
+    long long gpu_mem_baseline_used_bytes = 0;
+    long long gpu_mem_peak_used_bytes = 0;
+    long long gpu_mem_peak_reserved_bytes = 0;
+    if (stats != NULL) {
+        if (!capture_gpu_memory_used(reason, &gpu_mem_baseline_used_bytes)) return NULL;
+        gpu_mem_peak_reserved_bytes = gpu_mem_baseline_used_bytes;
+    }
 
     const int num_layers = mdd->num_layers;
     clock_t t0, t1;
@@ -1266,6 +1337,7 @@ ParetoFrontier* topdown_mdd_cuda_enumerate(MDD* mdd,
     t1 = clock();
     if (stats != NULL) {
         stats->wall_pack_transfer_s += std::chrono::duration_cast<std::chrono::duration<double> >(std::chrono::steady_clock::now() - pack_begin).count();
+        if (!sample_gpu_memory_peak(reason, gpu_mem_baseline_used_bytes, &gpu_mem_peak_used_bytes, &gpu_mem_peak_reserved_bytes)) return NULL;
     }
 
     // 2. Initialize frontier at root
@@ -1301,7 +1373,10 @@ ParetoFrontier* topdown_mdd_cuda_enumerate(MDD* mdd,
                     nn,
                     d_td_offsets, d_td_points,
                     d_ns, d_no, d_np, reason, kernel_version,
-                    &layer_candidates, &layer_survivors)) {
+                    &layer_candidates, &layer_survivors,
+                    stats != NULL ? &gpu_mem_baseline_used_bytes : NULL,
+                    stats != NULL ? &gpu_mem_peak_used_bytes : NULL,
+                    stats != NULL ? &gpu_mem_peak_reserved_bytes : NULL)) {
             return NULL;
         }
         if (!layer_expand_timer.finish_and_add(stats != NULL ? &stats->kernel_expand_td_s : NULL,
@@ -1314,6 +1389,7 @@ ParetoFrontier* topdown_mdd_cuda_enumerate(MDD* mdd,
             stats->work_candidates_total += layer_candidates;
             stats->work_frontier_survivors_total += layer_survivors;
             stats->work_frontier_peak_points = std::max(stats->work_frontier_peak_points, layer_survivors);
+            if (!sample_gpu_memory_peak(reason, gpu_mem_baseline_used_bytes, &gpu_mem_peak_used_bytes, &gpu_mem_peak_reserved_bytes)) return NULL;
         }
 
         d_td_sizes.swap(d_ns);
@@ -1349,6 +1425,11 @@ ParetoFrontier* topdown_mdd_cuda_enumerate(MDD* mdd,
 
     if (reason != NULL) reason->clear();
     if (stats != NULL) {
+        if (!sample_gpu_memory_peak(reason, gpu_mem_baseline_used_bytes, &gpu_mem_peak_used_bytes, &gpu_mem_peak_reserved_bytes)) {
+            return NULL;
+        }
+        stats->gpu_mem_peak_used_bytes = gpu_mem_peak_used_bytes;
+        stats->gpu_mem_peak_reserved_bytes = gpu_mem_peak_reserved_bytes;
         stats->kernel_total_s = stats->kernel_expand_td_s + stats->kernel_dominance_s;
     }
     return frontier;
