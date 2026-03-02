@@ -53,7 +53,7 @@ CFLAGS  += $(CCOPT)
 # number of objective functions
 NUM_OBJS=3
 ENABLE_CUDA ?= 1
-ENABLE_OPENMP ?= 0
+ENABLE_OPENMP ?= 1
 
 CFLAGS += -DNOBJS=$(NUM_OBJS)
 
