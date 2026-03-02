@@ -233,7 +233,6 @@ int main(int argc, char *argv[])
         enumeration_stats->cpu_compile_s = ((double)compilation_tsp) / CLOCKS_PER_SEC;
         enumeration_stats->cpu_enumeration_s = ((double)pareto_tsp_cpu) / CLOCKS_PER_SEC;
         enumeration_stats->cpu_total_s = enumeration_stats->cpu_compile_s + enumeration_stats->cpu_enumeration_s;
-        enumeration_stats->cpu_dominance_s = ((double)enumeration_stats->cpu_ticks_state_dominance) / CLOCKS_PER_SEC;
         enumeration_stats->wall_compile_s = compilation_tsp_wall_s;
         enumeration_stats->wall_enumeration_s = pareto_tsp_wall_enumeration_s;
         enumeration_stats->cpu_mem_peak_bytes = get_cpu_peak_memory_bytes();
@@ -382,7 +381,6 @@ int main(int argc, char *argv[])
     enumeration_stats->cpu_compile_s = ((double)compilation_cpu_elapsed) / CLOCKS_PER_SEC;
     enumeration_stats->cpu_enumeration_s = ((double)pareto_cpu_elapsed) / CLOCKS_PER_SEC;
     enumeration_stats->cpu_total_s = enumeration_stats->cpu_compile_s + enumeration_stats->cpu_enumeration_s;
-    enumeration_stats->cpu_dominance_s = ((double)enumeration_stats->cpu_ticks_state_dominance) / CLOCKS_PER_SEC;
     enumeration_stats->wall_compile_s = compilation_wall_s;
     enumeration_stats->wall_enumeration_s = pareto_wall_enumeration_s;
     enumeration_stats->cpu_mem_peak_bytes = get_cpu_peak_memory_bytes();

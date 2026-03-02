@@ -177,7 +177,7 @@ bool write_stats_jsonl(const string &out_path,
     const double cpu_compile_s = stats != NULL ? stats->cpu_compile_s : 0.0;
     const double cpu_enumeration_s = stats != NULL ? stats->cpu_enumeration_s : 0.0;
     const double cpu_total_s = stats != NULL ? stats->cpu_total_s : 0.0;
-    const double cpu_dominance_s = stats != NULL ? stats->cpu_dominance_s : 0.0;
+    const double cpu_state_dominance_s = stats != NULL ? stats->cpu_state_dominance_s : 0.0;
     const double wall_compile_s = stats != NULL ? stats->wall_compile_s : 0.0;
     const double wall_enumeration_s = stats != NULL ? stats->wall_enumeration_s : 0.0;
     const double kernel_expand_td_s = stats != NULL ? stats->kernel_expand_td_s : 0.0;
@@ -216,7 +216,7 @@ bool write_stats_jsonl(const string &out_path,
     out << "\"cpu_compile_s\":" << cpu_compile_s << ",";
     out << "\"cpu_enumeration_s\":" << cpu_enumeration_s << ",";
     out << "\"cpu_total_s\":" << cpu_total_s << ",";
-    out << "\"cpu_dominance_s\":" << cpu_dominance_s;
+    out << "\"cpu_state_dominance_s\":" << cpu_state_dominance_s;
     out << "},";
     out << "\"wall\":{";
     out << "\"wall_compile_s\":" << wall_compile_s << ",";
@@ -247,8 +247,7 @@ bool write_stats_jsonl(const string &out_path,
     out << "},";
 
     out << "\"dominance\":{";
-    out << "\"dominance_filtered_total\":" << dominance_filtered_total << ",";
-    out << "\"cpu_ticks_state_dominance\":" << (stats != NULL ? stats->cpu_ticks_state_dominance : 0);
+    out << "\"dominance_filtered_total\":" << dominance_filtered_total;
     out << "},";
 
     out << "\"structure\":{";
@@ -316,7 +315,7 @@ void print_and_save_run_summary(const CliOptions &opts,
     {
         const int layer_coupling = enumeration_stats != NULL ? enumeration_stats->layer_coupling : 0;
         const int dominance_filtered_total = enumeration_stats != NULL ? enumeration_stats->dominance_filtered_total : 0;
-        const double cpu_dominance_s = enumeration_stats != NULL ? enumeration_stats->cpu_dominance_s : 0.0;
+        const double cpu_state_dominance_s = enumeration_stats != NULL ? enumeration_stats->cpu_state_dominance_s : 0.0;
         const double cpu_compile_s = enumeration_stats != NULL ? enumeration_stats->cpu_compile_s : 0.0;
         const double cpu_enumeration_s = enumeration_stats != NULL ? enumeration_stats->cpu_enumeration_s : 0.0;
         const double cpu_total_s = enumeration_stats != NULL ? enumeration_stats->cpu_total_s : 0.0;
@@ -336,7 +335,7 @@ void print_and_save_run_summary(const CliOptions &opts,
         cout << "\t" << cpu_enumeration_s;
         cout << "\t" << layer_coupling;
         cout << "\t" << dominance_filtered_total;
-        cout << "\t" << cpu_dominance_s;
+        cout << "\t" << cpu_state_dominance_s;
         cout << "\t" << wall_compile_s;
         cout << "\t" << wall_enumeration_s;
         cout << endl;

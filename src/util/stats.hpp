@@ -15,8 +15,8 @@
 // This is the canonical runtime stats object.
 //
 struct EnumerationStats {
-    // Time spent in pareto dominance filtering
-    std::clock_t cpu_ticks_state_dominance;
+    // Time spent in state-dominance filtering (CPU seconds)
+    double cpu_state_dominance_s;
     // Solutions filtered by pareto dominance
     int dominance_filtered_total;
     // Layer where coupling happened
@@ -30,7 +30,6 @@ struct EnumerationStats {
     double cpu_compile_s;
     double cpu_enumeration_s;
     double cpu_total_s;
-    double cpu_dominance_s;
     double wall_compile_s;
     double wall_enumeration_s;
 
@@ -68,7 +67,7 @@ struct EnumerationStats {
     int cpu_cutset_size;
 
     EnumerationStats()
-        : cpu_ticks_state_dominance(0),
+        : cpu_state_dominance_s(0.0),
           dominance_filtered_total(0),
           layer_coupling(0),
           cpu_perf_enabled(false),
@@ -76,7 +75,6 @@ struct EnumerationStats {
           cpu_compile_s(0.0),
           cpu_enumeration_s(0.0),
           cpu_total_s(0.0),
-          cpu_dominance_s(0.0),
           wall_compile_s(0.0),
           wall_enumeration_s(0.0),
           wall_state_dominance_s(0.0),

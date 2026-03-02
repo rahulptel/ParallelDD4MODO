@@ -182,7 +182,7 @@ inline long long count_mdd_survivors_bottomup_layer(MDD* mdd, const int layer) {
 //
 ParetoFrontier* BDDMultiObj::pareto_frontier_topdown_cuda(BDD* bdd, bool maximization, const int problem_type, const int state_dominance, EnumerationStats* stats, std::string* reason, int kernel_version) {
     if (stats != NULL) {
-        stats->cpu_ticks_state_dominance = 0;
+        stats->cpu_state_dominance_s = 0.0;
         stats->dominance_filtered_total = 0;
         stats->layer_coupling = 0;
         reset_cpu_perf_stats(stats);
@@ -198,7 +198,7 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown_cuda(BDD* bdd, bool maximiz
 //
 ParetoFrontier* BDDMultiObj::pareto_frontier_topdown_cuda(MDD* mdd, EnumerationStats* stats, std::string* reason, int kernel_version) {
     if (stats != NULL) {
-        stats->cpu_ticks_state_dominance = 0;
+        stats->cpu_state_dominance_s = 0.0;
         stats->dominance_filtered_total = 0;
         stats->layer_coupling = 0;
         reset_cpu_perf_stats(stats);
@@ -215,7 +215,7 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown(BDD* bdd, bool maximization
     //cout << "\nComputing Pareto Frontier..." << endl;
 
 	// Initialize stats
-	stats->cpu_ticks_state_dominance = 0;
+	stats->cpu_state_dominance_s = 0.0;
 	stats->dominance_filtered_total = 0;
     reset_cpu_perf_stats(stats);
     clock_t init;
@@ -257,7 +257,7 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown(BDD* bdd, bool maximization
                     const WallClock::time_point dominance_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
                     init = clock();
 					BDDMultiObj::filter_dominance(bdd, l, problem_type, state_dominance, stats);
-                    stats->cpu_ticks_state_dominance += clock()-init;
+                    stats->cpu_state_dominance_s += static_cast<double>(clock() - init) / CLOCKS_PER_SEC;
                     if (perf_enabled) {
                         stats->wall_state_dominance_s += wall_elapsed_s(dominance_begin);
                     }
@@ -303,7 +303,7 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown(BDD* bdd, bool maximization
                     const WallClock::time_point dominance_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
                     init = clock();				
 					BDDMultiObj::filter_dominance(bdd, l, problem_type, state_dominance, stats);
-					stats->cpu_ticks_state_dominance += clock()-init;
+					stats->cpu_state_dominance_s += static_cast<double>(clock() - init) / CLOCKS_PER_SEC;
                     if (perf_enabled) {
                         stats->wall_state_dominance_s += wall_elapsed_s(dominance_begin);
                     }
@@ -690,7 +690,7 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_dynamic_layer_cutset(BDD* bdd, bool
 	bdd->get_terminal()->pareto_frontier_bu->add(sol);
 
 	// Initialize stats
-	stats->cpu_ticks_state_dominance = 0;
+	stats->cpu_state_dominance_s = 0.0;
 	stats->dominance_filtered_total = 0;
     clock_t init;
 
@@ -725,7 +725,7 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_dynamic_layer_cutset(BDD* bdd, bool
                 const WallClock::time_point dominance_begin = perf_enabled ? WallClock::now() : WallClock::time_point();
                 init = clock();
 				BDDMultiObj::filter_dominance(bdd, layer_topdown, problem_type, state_dominance, stats);
-                stats->cpu_ticks_state_dominance += clock()-init;
+                stats->cpu_state_dominance_s += static_cast<double>(clock() - init) / CLOCKS_PER_SEC;
                 if (perf_enabled) {
                     stats->wall_state_dominance_s += wall_elapsed_s(dominance_begin);
                 }
@@ -1154,7 +1154,7 @@ void BDDMultiObj::filter_dominance_setpacking(BDD* bdd, const int layer, Enumera
 //
 ParetoFrontier* BDDMultiObj::pareto_frontier_topdown(MDD* mdd, EnumerationStats* stats, int cpu_threads) {
 	// Initialize stats
-	stats->cpu_ticks_state_dominance = 0;
+	stats->cpu_state_dominance_s = 0.0;
 	stats->dominance_filtered_total = 0;
     reset_cpu_perf_stats(stats);
     const bool perf_enabled = cpu_perf_enabled(stats);
@@ -1212,7 +1212,7 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_topdown(MDD* mdd, EnumerationStats*
 //
 ParetoFrontier* BDDMultiObj::pareto_frontier_dynamic_layer_cutset_cuda(MDD* mdd, EnumerationStats* stats, std::string* reason, int kernel_version) {
     if (stats != NULL) {
-        stats->cpu_ticks_state_dominance = 0;
+        stats->cpu_state_dominance_s = 0.0;
         stats->dominance_filtered_total = 0;
         stats->layer_coupling = 0;
         reset_cpu_perf_stats(stats);
@@ -1245,7 +1245,7 @@ ParetoFrontier* BDDMultiObj::pareto_frontier_dynamic_layer_cutset(MDD* mdd, Enum
 	mdd->get_terminal()->pareto_frontier_bu->add(sol);
 
 	// Initialize stats
-	stats->cpu_ticks_state_dominance = 0;
+	stats->cpu_state_dominance_s = 0.0;
 	stats->dominance_filtered_total = 0;
 
 	// Current layers

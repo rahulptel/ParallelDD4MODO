@@ -1222,7 +1222,7 @@ ParetoFrontier* topdown_cuda_enumerate(BDD* bdd,
             clock_t init = clock();
             BDDMultiObj::filter_dominance_cuda(bdd, l, problem_type, state_dominance, stats);
             if (stats != NULL) {
-                stats->cpu_ticks_state_dominance += clock() - init;
+                stats->cpu_state_dominance_s += static_cast<double>(clock() - init) / CLOCKS_PER_SEC;
             }
             g_layer_dom_ctx = NULL;
 
