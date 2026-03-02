@@ -52,8 +52,15 @@ cd "$PROJECT_ROOT"
 
 if [ "$CLEAN_FIRST" = "1" ]; then
     make "${MACHINE_ARGS[@]}" clean
+    rm -f "$SCRIPT_DIR"/multiobj_nobjs*
 fi
 
 for i in $(seq "$NUM_OBJS_MIN" "$NUM_OBJS_MAX"); do
     make "${MACHINE_ARGS[@]}" "${NVCC_ARGS[@]}" "${BUILD_ARGS[@]}" "$MAKE_JOBS" NUM_OBJS="$i"
+    BUILT_BIN="$PROJECT_ROOT/multiobj_nobjs$i"
+    if [ ! -f "$BUILT_BIN" ]; then
+        echo "Error: expected binary not found after build: $BUILT_BIN"
+        exit 1
+    fi
+    mv -f "$BUILT_BIN" "$SCRIPT_DIR/"
 done
