@@ -22,7 +22,7 @@ RUNTIME_MAX=3000000
 dt_failed=1
 
 # The meta-job fails if first N_failed_max cases all fail:
-N_failed_max=700
+N_failed_max=1000
 
 
 export WHOLE_NODE NWHOLE NJOBS_MAX RUNTIME_MIN RUNTIME_MAX dt_failed N_failed_max
