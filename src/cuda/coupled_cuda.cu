@@ -767,7 +767,7 @@ bool expand_layer_cuda(
     // Compact surviving points
     thrust::device_vector<int> d_ap(total_cand, 0);
     thrust::exclusive_scan(d_alive.begin(), d_alive.end(), d_ap.begin());
-    const int total_next = thrust::reduce(d_alive.begin(), d_alive.end(), 0);
+    const int total_next = thrust::reduce(d_next_sizes.begin(), d_next_sizes.end(), 0);
     if (total_next_out != NULL) {
         *total_next_out = total_next;
     }
