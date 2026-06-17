@@ -149,7 +149,7 @@ Repeat indefinitely until interrupted:
 6. Run the target command and redirect logs:
    ```bash
    mkdir -p reports/autoresearch
-   timeout 10m ./multiobj_nobjs5 ./data/5/tsp/tsp-nobj5-ncities15-seed13095.dat 3 1 0 --backend gpu --kernel 3 \
+   timeout 5m ./multiobj_nobjs5 ./data/5/tsp/tsp-nobj5-ncities15-seed13095.dat 3 1 0 --backend gpu --kernel 3 \
      > reports/autoresearch/run.log 2> reports/autoresearch/run.err
    ```
 7. Parse stdout/stderr. Determine:

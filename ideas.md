@@ -22,7 +22,10 @@ Relevant code paths:
 - MDD top-down GPU: `topdown_mdd_cuda_enumerate`, through shared
   `expand_layer_cuda`.
 - MDD coupled GPU: `src/cuda/coupled_cuda.cu`
-  - uses the same layer expansion pattern through `expand_layer_cuda`
+  - uses the same generate/filter/scatter expansion pattern through
+    `expand_layer_cuda`
+  - this checkout has materialization sites in both `topdown_cuda.cu` and
+    `coupled_cuda.cu`; search both files when changing expansion kernels
   - the final cutset join already uses a fixed product batch cap
     (`MAX_BATCH_PRODUCTS`)
 
@@ -175,6 +178,66 @@ search per comparison would be too expensive. A practical version should either:
   or
 - launch by edge/destination tile so candidate reconstruction can be derived
   without global searches.
+
+### Virtual Candidate Implementation Sketch
+
+The concrete variant in `ideas_new.md` is useful enough to keep as an
+implementation sketch. Treat the candidate array as virtual: a candidate is
+identified by its global or segment-local index, then reconstructed from the
+edge that generated it and the source frontier point on that edge.
+
+Core device helper:
+
+- Inputs: local candidate index, candidate segment begin, `edge_offsets`,
+  `edge_begin`, `edge_end`, `edge_src`, `edge_weights`, `prev_offsets`,
+  `prev_points`.
+- Binary-search `edge_offsets[edge_begin..edge_end]` to find the edge whose
+  candidate range contains the index.
+- Compute:
+  - `src_point_idx = global_idx - edge_offsets[e]`
+  - `src_node = edge_src[e]`
+  - `src_base = prev_offsets[src_node]`
+  - objective `o` as
+    `prev_points[(src_base + src_point_idx) * NOBJS + o] + edge_weights[e * NOBJS + o]`.
+
+Dominance-kernel change:
+
+- Remove the `points` / `d_cand_points` parameter from the per-destination
+  dominance kernel.
+- Pass `edge_src`, `edge_weights`, `prev_offsets`, and `prev_points`.
+- Reconstruct candidate `i` into registers.
+- For each comparison tile, reconstruct candidate `j` into shared memory and
+  keep the existing dominance comparison logic.
+- Prefer a destination-segment restricted search using that destination's
+  `edge_begin`/`edge_end`. A global binary search per comparison is simpler but
+  can be costly on large layers.
+
+Scatter-kernel change:
+
+- Replace the scatter kernel that reads from `d_cand_points`.
+- For each alive candidate, reconstruct its objective vector and write directly
+  to `d_next_points[alive_prefix[i]]`.
+
+Host-side change:
+
+- Keep edge candidate counts, edge offsets, destination candidate counts,
+  alive flags, and alive prefix sums.
+- Remove allocation and launch of the candidate point buffer:
+  `d_cand_points` / `d_cand`.
+- Launch the virtual dominance and virtual scatter kernels with edge/source
+  frontier metadata.
+- Apply this to both current materialization paths:
+  - `src/cuda/topdown_cuda.cu`
+  - `src/cuda/coupled_cuda.cu`
+
+Memory impact:
+
+- Eliminates the largest temporary allocation, `total_candidates * NOBJS`.
+- Does not eliminate all candidate-scale memory: alive flags, prefix arrays,
+  edge offsets, and count arrays can still be `O(total_candidates)` or
+  `O(num_edges + num_nodes)`.
+- If alive/prefix arrays are still too large, combine virtual candidates with
+  destination-node batching.
 
 ### Tradeoff
 
