@@ -7,12 +7,9 @@ BACKEND = "gpu"
 INCLUDE_CPU_KERNELS = 0
 CPU_WORKERS = 1
 FORCED_METHOD = 1
-GPU_KERNEL = 3
 
 KNAPSACK_MIN_VARS = 40
-KNAPSACK_MAX_VARS = 70
 SETPACKING_MIN_VARS = 150
-SETPACKING_MAX_VARS = 225
 TSP_MIN_CITIES = 15
 
 
@@ -48,7 +45,7 @@ def parse_tsp_cities(name: str):
 def append_case(lines, binary, instance, problem_type, method, dominance):
     if BACKEND == "gpu":
         lines.append(
-            f"{binary} {instance} {problem_type} {method} {dominance} --backend gpu --kernel {GPU_KERNEL} --save-frontier --save-stats"
+            f"{binary} {instance} {problem_type} {method} {dominance} --backend gpu --save-frontier --save-stats"
         )
         return
 
@@ -102,14 +99,14 @@ def main():
 
         for path in iter_dat_files(source_data_root / "knapsack"):
             nvars = parse_knapsack_nvars(path.name)
-            if nvars is None or nvars < KNAPSACK_MIN_VARS or nvars > KNAPSACK_MAX_VARS:
+            if nvars is None or nvars < KNAPSACK_MIN_VARS:
                 continue
             target_instance = target_data_base / str(nobjs) / "knapsack" / path.name
             append_case(lines, binary, target_instance, 1, method_knapsack, 1)
 
         for path in iter_dat_files(source_data_root / "binproblem"):
             nvars = parse_setpacking_nvars(path.name)
-            if nvars is None or nvars < SETPACKING_MIN_VARS or nvars > SETPACKING_MAX_VARS or nvars == 175:
+            if nvars is None or nvars < SETPACKING_MIN_VARS:
                 continue
             target_instance = target_data_base / str(nobjs) / "binproblem" / path.name
             append_case(lines, binary, target_instance, 2, method_binproblem, 0)
