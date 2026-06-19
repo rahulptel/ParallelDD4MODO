@@ -1,158 +1,251 @@
-# cuMODD
+# Parallel Decision Diagram-based Multiobjective Discrete Optimization
 
-`cuMODD` is a C++ project for multi-objective optimization using decision diagrams, with CPU and optional GPU (CUDA) execution paths.
+Parallel Decision Diagram-based Multiobjective Discrete Optimization, or
+`PDDMODO`, is a C++ research codebase for exact multiobjective optimization
+with decision diagrams. It builds binary decision diagrams (BDDs) or multivalued
+decision diagrams (MDDs) for supported problem classes, then enumerates the
+Pareto frontier with CPU algorithms and selected CUDA implementations.
+
+The main executable is compiled for a fixed number of objectives:
+
+```bash
+multiobj_nobjs<NUM_OBJS>
+```
+
+For example, a 3-objective build produces `multiobj_nobjs3`. Use a binary whose
+`NUM_OBJS` matches the objective count in the input instance.
+
+## Project Layout
+
+```text
+.
+|-- makefile              # Main build file
+|-- compile_all.sh        # Helper script for building several NUM_OBJS binaries
+|-- src/
+|   |-- main.cpp          # CLI entry point, instance dispatch, build/enumeration flow
+|   |-- bdd/              # BDD data structures, constructors, and Pareto algorithms
+|   |-- mdd/              # MDD data structures and TSP MDD construction
+|   |-- instances/        # Input parsers for knapsack, set packing, independent set, TSP
+|   |-- cuda/             # CUDA kernels/wrappers plus CPU-build stubs
+|   `-- util/             # CLI parsing, output, stats, OpenMP helpers, CPU affinity
+|-- data/                 # Benchmark/test instances grouped by objective count
+|-- cc/                   # Cluster/experiment job scripts and tables
+`-- results/              # Result summaries and plotting scripts, when present
+```
+
+The currently wired problem types are:
+
+- `1`: multiobjective knapsack, represented as a BDD.
+- `2`: multiobjective set packing, converted to an independent-set BDD.
+- `3`: multiobjective TSP, represented as an MDD.
+
+The available enumeration methods are:
+
+- `1`: top-down BFS frontier propagation.
+- `2`: bottom-up BFS frontier propagation.
+- `3`: dynamic layer cutset coupling.
 
 ## Build
 
-From the project root:
+Builds are controlled by the root `makefile`. The important options are:
+
+- `NUM_OBJS=<N>`: compile-time objective dimension. Default: `3`.
+- `ENABLE_CUDA=0|1`: include CUDA kernels. Default: `1`.
+- `ENABLE_OPENMP=0|1`: include OpenMP CPU parallelism. Default: `1`.
+- `machine=cc`: use `BOOST_ROOT` as the Boost location. This can come from
+  the environment as well as the make command line.
+- `NVCC=<path>`: override CUDA compiler auto-detection.
+
+The makefile uses `g++` for C++ sources and requires Boost headers under
+`/opt/boost/include` by default. CUDA builds require `nvcc >= 12`.
+
+If Boost is installed elsewhere, pass the Boost prefix explicitly:
 
 ```bash
-make NUM_OBJS=3
+make BOOSTDIR=/path/to/boost-prefix NUM_OBJS=3 ENABLE_CUDA=0 ENABLE_OPENMP=1
 ```
 
-This default build is CPU-serial (OpenMP disabled unless explicitly enabled).
+### CPU-Only Build
 
-CPU build with OpenMP acceleration:
-
-```bash
-make NUM_OBJS=3 ENABLE_OPENMP=1
-```
-
-CPU-only build (no `nvcc` required):
-
-```bash
-make NUM_OBJS=3 ENABLE_CUDA=0
-```
-
-Clean build artifacts:
+Use this when CUDA is unavailable or when you only want CPU execution:
 
 ```bash
 make clean
+make NUM_OBJS=3 ENABLE_CUDA=0 ENABLE_OPENMP=1
+```
+
+For a serial CPU build without OpenMP:
+
+```bash
+make clean
+make NUM_OBJS=3 ENABLE_CUDA=0 ENABLE_OPENMP=0
+```
+
+When OpenMP is disabled, explicit CPU thread arguments are rejected at runtime
+and the binary runs with one CPU thread.
+
+### GPU Build
+
+Use this when `nvcc` and the CUDA runtime are available:
+
+```bash
+make clean
+make NUM_OBJS=3 ENABLE_CUDA=1 ENABLE_OPENMP=1
+```
+
+If `nvcc` is not on the default path:
+
+```bash
+make clean
+make NUM_OBJS=3 ENABLE_CUDA=1 ENABLE_OPENMP=1 NVCC=/usr/local/cuda/bin/nvcc
+```
+
+### Build Multiple Objective Dimensions
+
+`compile_all.sh` builds `multiobj_nobjs3` through `multiobj_nobjs7` by default:
+
+```bash
+./compile_all.sh
+```
+
+Useful overrides:
+
+```bash
+ENABLE_CUDA=0 ENABLE_OPENMP=1 ./compile_all.sh
+NUM_OBJS_MIN=4 NUM_OBJS_MAX=6 ./compile_all.sh
+CLEAN_FIRST=0 MAKE_JOBS=-j8 ./compile_all.sh
+```
+
+On Compute Canada-style environments using `machine=cc`, set `BOOST_ROOT`:
+
+```bash
+BOOST_ROOT=/path/to/boost machine=cc ENABLE_CUDA=0 ./compile_all.sh
+```
+
+If your shell already has `machine=cc` set, regular `make` commands also need
+`BOOST_ROOT`:
+
+```bash
+BOOST_ROOT=/path/to/boost make NUM_OBJS=3 ENABLE_CUDA=0 ENABLE_OPENMP=1
 ```
 
 ## Run
 
-Executable name:
-
-- `multiobj_nobjs<NUM_OBJS>`
-
-CLI:
+General CLI:
 
 ```bash
-./multiobj_nobjs3 <input-file> <problem-type> <method> <dominance> [options]
+./multiobj_nobjs3 <input-file> <problem-type> <method> <state_dominance> [options]
 ```
 
-Backend selection (optional; defaults to CPU):
-- named:
-  - `--backend cpu|gpu`
-- shorthand:
-  - `cpu [num-threads]`
-  - `gpu [kernel]`
+Arguments:
+
+- `<input-file>`: path to an instance under `data/` or another compatible file.
+- `<problem-type>`: `1` knapsack, `2` set packing, `3` TSP.
+- `<method>`: `1` top-down, `2` bottom-up, `3` dynamic layer cutset.
+- `<state_dominance>`: `0` disabled, `1` enabled where implemented.
+
+Backend options:
+
+```bash
+--backend cpu|gpu
+cpu [num_threads]
+gpu [3]
+```
 
 CPU options:
-- `--cpu-threads <N>`: positive integer thread count for CPU enumeration (only when built with `ENABLE_OPENMP=1`).
-- `--cpu-kernel <K>`: CPU kernel variant (`1` or `3`) for CPU methods `1` (top-down) and `3` (dynamic layer cutset), including TSP.
-- if CPU backend is selected and no thread count is provided:
-  - OpenMP-enabled build: `OMP_NUM_THREADS` is used when valid; otherwise defaults to `1`.
-  - OpenMP-disabled build: always runs serially with `1` thread.
-- in OpenMP-disabled builds, explicit CPU thread arguments (`--cpu-threads <N>` or `cpu <N>`) fail with a hard error and instruct to rebuild with `ENABLE_OPENMP=1`.
-- in OpenMP-enabled CPU runs, a fixed internal thread-to-core mapping is applied (`thread i -> core i`, up to 256 threads).
-- this mapping is ignored when backend is `gpu` or when built without OpenMP.
+
+```bash
+--cpu-threads <N>
+--cpu-kernel <1|3>
+```
+
+If `--cpu-threads` is omitted in an OpenMP build, the program uses
+`OMP_NUM_THREADS` when it is a valid positive integer, otherwise `1`.
 
 GPU options:
-- `--kernel <K>`: select kernel version (`1`, `2`, or `3`).
-- `kernel` is only used when backend is `gpu`.
-- token `cuda` is rejected; use `gpu`.
 
-Kernel mapping:
-- `1`: one block per node.
-- `2`: fixed number of blocks per node (2D grid).
-- `3`: dynamic number of blocks per node (1D grid + binary-search destination lookup).
+```bash
+--kernel 3
+```
 
-If backend is `gpu` and kernel is omitted, defaults are:
-- knapsack (`problem-type=1`) -> `1`
-- set packing (`problem-type=2`) -> `2`
-- tsp (`problem-type=3`) -> `3`
+The token `cuda` is intentionally rejected; use `gpu`.
 
-Frontier saving options:
-- `--save-frontier`: save frontier as gzip-compressed CSV to `<input_stem>.frontier.csv.gz` in the current working directory.
-- `--frontier-out <path>`: save frontier as gzip-compressed CSV to the explicit path provided.
-- If both are passed, `--frontier-out <path>` is used.
-- Optional arguments can be provided in any order.
+Output options:
 
-Stats saving options:
-- `--save-stats`: write one JSONL record with run statistics.
-- `--stats-out <path>`: write JSONL stats to the explicit path provided.
-- If `--save-stats` is passed without `--stats-out`, the default is `<input_stem>.stats.jsonl`.
-- `--stats-out <path>` implies `--save-stats`.
-- JSONL write mode is append (`app`): one line is appended per run.
-- If stats writing fails, the run exits with a nonzero status and prints an explicit error.
+```bash
+--save-frontier
+--frontier-out <path>
+--save-stats
+--stats-out <path>
+```
 
-Stdout format (always 3 lines):
-- line 1: number of Pareto solutions.
-- line 2: CPU total time (`cpu_compile_s + cpu_enumeration_s`) for backward compatibility.
-- line 3 (problem types 1/2): tab-separated stats in this order:
-  - `method`
-  - `state_dominance`
-  - `original_width`
-  - `reduced_width`
-  - `original_num_nodes`
-  - `reduced_num_nodes`
-  - `cpu_compile_s`
-  - `cpu_enumeration_s`
-  - `layer_coupling`
-  - `dominance_filtered_total`
-  - `cpu_state_dominance_s`
-  - `wall_compile_s`
-  - `wall_enumeration_s` (excludes final lexicographic sort)
-- line 3 (problem type 3 / TSP): tab-separated stats in this order:
-  - `cpu_compile_s`
-  - `cpu_enumeration_s`
-  - `wall_compile_s`
-  - `wall_enumeration_s` (excludes final lexicographic sort)
+`--save-frontier` writes a gzip-compressed CSV frontier to
+`<input_stem>.frontier.csv.gz` unless `--frontier-out` is provided.
+`--save-stats` appends one JSONL record to `<input_stem>.stats.jsonl` unless
+`--stats-out` is provided. Passing `--frontier-out` or `--stats-out` implies the
+corresponding save option.
 
-JSONL schema notes (`--save-stats`):
-- One nested JSON object is written per run (JSONL).
-- Top-level keys:
-  - `schema_version`
-  - `identity`
-  - `outputs`
-  - `timing`
-  - `memory`
-  - `work`
-  - `dominance`
-  - `structure`
-  - `metrics`
-  - `status`
-- `timing` uses `cpu_*` and `wall_*` naming.
-- `memory` contains:
-  - `cpu.cpu_mem_peak_bytes` (process peak RSS in bytes)
-  - `gpu.gpu_mem_peak_used_bytes`
-  - `gpu.gpu_mem_peak_reserved_bytes`
-- `work` contains:
-  - `work_candidates_total`
-  - `work_candidates_peak`
-  - `work_frontier_survivors_total`
-  - `work_frontier_peak_points`
-  - `work_join_products_total`
-- `structure` contains:
-  - `original_width`
-  - `reduced_width`
-  - `original_num_nodes`
-  - `reduced_num_nodes`
-  - `max_num_nodes_per_layer`
-  - `layer_coupling`
-- `metrics` additionally contains:
-  - `std_candidates_per_layer`
-  - `std_frontier_survivors_per_layer`
-- `metrics.std_candidates_per_layer` and `metrics.std_frontier_survivors_per_layer` are full layer-indexed arrays for methods `1`/`2`, and are `[]` for method `3`.
-- `structure.max_num_nodes_per_layer` is populated from the enumeration DD in all supported branches (BDD and TSP/MDD).
-- Key timing semantics:
-  - `wall_enumeration_s` excludes final lexicographic sort.
-  - `cpu_total_s = cpu_compile_s + cpu_enumeration_s` (same CPU semantics as stdout line 2).
+### Supported Backend/Method Combinations
 
-When backend is `gpu`, execution fails fast with a nonzero exit code if CUDA is unavailable or if the selected problem/method combination has no GPU implementation.
+For knapsack and set packing BDDs:
 
-## Data
+- CPU supports methods `1`, `2`, and `3`.
+- GPU supports method `1`.
+- GPU methods `2` and `3` fail fast as unsupported.
 
-Sample/input data is under `data/`.
+For TSP MDDs:
+
+- CPU supports methods `1` and `3`.
+- GPU supports methods `1` and `3`.
+- Method `2` is not accepted for TSP.
+
+## Test on a Small Instance
+
+The commands below use a 3-objective knapsack instance included in `data/`.
+
+### CPU Top-Down Test
+
+```bash
+make clean
+make NUM_OBJS=3 ENABLE_CUDA=0 ENABLE_OPENMP=1
+
+./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 1 0 \
+  --backend cpu --cpu-threads 4 --cpu-kernel 1 \
+  --save-stats --stats-out test.cpu.stats.jsonl
+```
+
+### CPU Dynamic Layer Cutset Test
+
+```bash
+./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 3 0 \
+  --backend cpu --cpu-threads 4 --cpu-kernel 3 \
+  --save-frontier --frontier-out test.cpu.frontier.csv.gz
+```
+
+### GPU Top-Down Test
+
+```bash
+make clean
+make NUM_OBJS=3 ENABLE_CUDA=1 ENABLE_OPENMP=1
+
+./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 1 0 \
+  --backend gpu --kernel 3 \
+  --save-stats --stats-out test.gpu.stats.jsonl
+```
+
+### TSP MDD Test
+
+```bash
+./multiobj_nobjs3 data/3/tsp/tsp-nobj3-ncities5-seed495.dat 3 1 0 \
+  --backend cpu --cpu-threads 4 --cpu-kernel 1
+```
+
+Successful runs always print three lines:
+
+1. Number of Pareto solutions.
+2. CPU total time, equal to compile time plus enumeration time.
+3. Tab-separated run statistics. BDD problem types include BDD structure fields;
+   TSP prints compile/enumeration timing fields.
+
+When comparing CPU and GPU runs, the first line should match for the same
+instance, problem type, method semantics, and objective count.
