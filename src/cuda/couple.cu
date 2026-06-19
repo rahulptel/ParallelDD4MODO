@@ -77,7 +77,7 @@ struct FrontierSumScore {
 // ---------------------------------------------------------------
 
 
-__global__ void scatter_alive_kernel(const int* alive,
+__global__ void compact_alive_points_kernel(const int* alive,
                                      const int* prefix,
                                      const ObjType* in_pts,
                                      ObjType* out_pts,
@@ -91,7 +91,7 @@ __global__ void scatter_alive_kernel(const int* alive,
 
 
 // Cartesian product: for each node, td[i] + bu[j] for all pairs
-__global__ void cartesian_product_kernel(const ObjType* td_pts,
+__global__ void materialize_cutset_products_kernel(const ObjType* td_pts,
                                          const int* td_off,
                                          const ObjType* bu_pts,
                                          const int* bu_off,
@@ -119,7 +119,7 @@ __global__ void cartesian_product_kernel(const ObjType* td_pts,
 }
 
 // Global dominance filter across all points (single flat array)
-__global__ void mark_dominated_global_kernel(const ObjType* points,
+__global__ void mark_globally_dominated_kernel(const ObjType* points,
                                              int num_points,
                                              int* alive) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -206,7 +206,7 @@ __global__ void mark_dominated_by_frontier_kernel(
 
 // Check which frontier points are dominated by any of the new candidates
 // alive[i] = 0 if some candidate strictly dominates frontier[i], else 1.
-__global__ void mark_frontier_dominated_kernel(
+__global__ void mark_frontier_dominated_by_batch_kernel(
     const ObjType* frontier, int num_frontier,
     const ObjType* candidates, int num_cand,
     int* alive)
@@ -252,11 +252,11 @@ __global__ void mark_frontier_dominated_kernel(
 } // anonymous namespace
 
 // ---------------------------------------------------------------
-// expand_layer_cuda: runs expansion kernels for one MDD layer.
+// expand_layer_frontiers: runs expansion kernels for one MDD layer.
 // Works identically for top-down and bottom-up.
 // ---------------------------------------------------------------
 
-ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
+ParetoFrontier* enumerate_mdd_coupled(MDD* mdd,
                                        EnumerationStats* stats,
                                        std::string* reason) {
     if (mdd == NULL) { set_reason(reason, "MDD is NULL"); return NULL; }
@@ -276,19 +276,19 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
     t0 = clock();
     std::vector<PackedMDDLayer> packed(num_layers);
     for (int l = 0; l < num_layers; ++l) {
-        const int nn = mdd->layers[l].size();
-        packed[l].num_nodes = nn;
+        const int num_nodes = mdd->layers[l].size();
+        packed[l].num_nodes = num_nodes;
 
         // --- top-down: incoming arcs (for layers 1..num_layers-1) ---
         if (l > 0) {
-            std::vector<int> h_off(nn + 1, 0);
-            for (int d = 0; d < nn; ++d)
+            std::vector<int> h_off(num_nodes + 1, 0);
+            for (int d = 0; d < num_nodes; ++d)
                 h_off[d + 1] = h_off[d] + mdd->layers[l][d]->in_arcs_list.size();
-            const int ne = h_off[nn];
-            std::vector<int> h_src(ne);
-            std::vector<ObjType> h_wt(ne * NOBJS);
+            const int num_edges = h_off[num_nodes];
+            std::vector<int> h_src(num_edges);
+            std::vector<ObjType> h_wt(num_edges * NOBJS);
             int idx = 0;
-            for (int d = 0; d < nn; ++d) {
+            for (int d = 0; d < num_nodes; ++d) {
                 for (MDDArc* a : mdd->layers[l][d]->in_arcs_list) {
                     h_src[idx] = a->tail->index;
                     for (int o = 0; o < NOBJS; ++o)
@@ -296,7 +296,7 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
                     ++idx;
                 }
             }
-            packed[l].td_num_edges = ne;
+            packed[l].td_num_edges = num_edges;
             packed[l].td_in_edge_offsets = h_off;
             packed[l].td_edge_src = h_src;
             packed[l].td_edge_weights = h_wt;
@@ -306,14 +306,14 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
 
         // --- bottom-up: outgoing arcs (for layers 0..num_layers-2) ---
         if (l < num_layers - 1) {
-            std::vector<int> h_off(nn + 1, 0);
-            for (int d = 0; d < nn; ++d)
+            std::vector<int> h_off(num_nodes + 1, 0);
+            for (int d = 0; d < num_nodes; ++d)
                 h_off[d + 1] = h_off[d] + mdd->layers[l][d]->out_arcs_list.size();
-            const int ne = h_off[nn];
-            std::vector<int> h_src(ne);
-            std::vector<ObjType> h_wt(ne * NOBJS);
+            const int num_edges = h_off[num_nodes];
+            std::vector<int> h_src(num_edges);
+            std::vector<ObjType> h_wt(num_edges * NOBJS);
             int idx = 0;
-            for (int d = 0; d < nn; ++d) {
+            for (int d = 0; d < num_nodes; ++d) {
                 for (MDDArc* a : mdd->layers[l][d]->out_arcs_list) {
                     h_src[idx] = a->head->index;
                     for (int o = 0; o < NOBJS; ++o)
@@ -321,7 +321,7 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
                     ++idx;
                 }
             }
-            packed[l].bu_num_edges = ne;
+            packed[l].bu_num_edges = num_edges;
             packed[l].bu_in_edge_offsets = h_off;
             packed[l].bu_edge_src = h_src;
             packed[l].bu_edge_weights = h_wt;
@@ -330,8 +330,8 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
         }
 
         // --- arc counts for heuristic ---
-        std::vector<int> h_out(nn), h_in(nn);
-        for (int d = 0; d < nn; ++d) {
+        std::vector<int> h_out(num_nodes), h_in(num_nodes);
+        for (int d = 0; d < num_nodes; ++d) {
             h_out[d] = mdd->layers[l][d]->out_arcs_list.size();
             h_in[d] = mdd->layers[l][d]->in_arcs_list.size();
         }
@@ -374,31 +374,31 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
     // ----------------------------------------------------------
     int layer_td = 0;
     int layer_bu = num_layers - 1;
-    int val_td = 0;
-    int val_bu = 0;
+    int topdown_score = 0;
+    int bottomup_score = 0;
 
     double total_td_time = 0.0, total_bu_time = 0.0;
     int td_iters = 0, bu_iters = 0;
 
     while (layer_td != layer_bu) {
-        if (val_td <= val_bu) {
+        if (topdown_score <= bottomup_score) {
             // Expand top-down
             ++layer_td;
-            const int nn = packed[layer_td].num_nodes;
-            thrust::device_vector<int> d_ns, d_no;
-            thrust::device_vector<ObjType> d_np;
+            const int num_nodes = packed[layer_td].num_nodes;
+            thrust::device_vector<int> next_sizes, next_offsets;
+            thrust::device_vector<ObjType> next_points;
             long long layer_candidates = 0;
             long long layer_survivors = 0;
 
             t0 = clock();
-            if (!expand_layer_cuda(
+            if (!expand_layer_frontiers(
                     packed[layer_td].td_in_edge_offsets,
                     packed[layer_td].td_edge_src,
                     packed[layer_td].td_edge_weights,
                     packed[layer_td].td_num_edges,
-                    nn,
+                    num_nodes,
                     d_td_offsets, d_td_points,
-                    d_ns, d_no, d_np, reason,
+                    next_sizes, next_offsets, next_points, reason,
                     &layer_candidates, &layer_survivors,
                     NULL, NULL,
                     NULL, NULL, NULL))
@@ -414,30 +414,30 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
                 stats->work_frontier_peak_points = std::max(stats->work_frontier_peak_points, layer_survivors);
             }
 
-            d_td_sizes.swap(d_ns);
-            d_td_offsets.swap(d_no);
-            d_td_points.swap(d_np);
+            d_td_sizes.swap(next_sizes);
+            d_td_offsets.swap(next_offsets);
+            d_td_points.swap(next_points);
 
             // Compute layer value on GPU
-            val_td = compute_layer_value(d_td_offsets, packed[layer_td].out_arc_counts, nn);
+            topdown_score = compute_expansion_score(d_td_offsets, packed[layer_td].out_arc_counts, num_nodes);
         } else {
             // Expand bottom-up
             --layer_bu;
-            const int nn = packed[layer_bu].num_nodes;
-            thrust::device_vector<int> d_ns, d_no;
-            thrust::device_vector<ObjType> d_np;
+            const int num_nodes = packed[layer_bu].num_nodes;
+            thrust::device_vector<int> next_sizes, next_offsets;
+            thrust::device_vector<ObjType> next_points;
             long long layer_candidates = 0;
             long long layer_survivors = 0;
 
             t0 = clock();
-            if (!expand_layer_cuda(
+            if (!expand_layer_frontiers(
                     packed[layer_bu].bu_in_edge_offsets,
                     packed[layer_bu].bu_edge_src,
                     packed[layer_bu].bu_edge_weights,
                     packed[layer_bu].bu_num_edges,
-                    nn,
+                    num_nodes,
                     d_bu_offsets, d_bu_points,
-                    d_ns, d_no, d_np, reason,
+                    next_sizes, next_offsets, next_points, reason,
                     &layer_candidates, &layer_survivors,
                     NULL, NULL,
                     NULL, NULL, NULL))
@@ -453,12 +453,12 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
                 stats->work_frontier_peak_points = std::max(stats->work_frontier_peak_points, layer_survivors);
             }
 
-            d_bu_sizes.swap(d_ns);
-            d_bu_offsets.swap(d_no);
-            d_bu_points.swap(d_np);
+            d_bu_sizes.swap(next_sizes);
+            d_bu_offsets.swap(next_offsets);
+            d_bu_points.swap(next_points);
 
             // Compute layer value on GPU (with 1.5x multiplier)
-            val_bu = 1.5 * compute_layer_value(d_bu_offsets, packed[layer_bu].in_arc_counts, nn);
+            bottomup_score = 1.5 * compute_expansion_score(d_bu_offsets, packed[layer_bu].in_arc_counts, num_nodes);
         }
     }
 
@@ -523,35 +523,35 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
     double time_cart = 0, time_filt = 0, time_update = 0;
     int num_batches = 0;
 
-    int bidx = 0;
-    while (bidx < (int)nz_nodes.size()) {
+    int batch_begin = 0;
+    while (batch_begin < (int)nz_nodes.size()) {
         // Determine batch bounds
         long long bprod_total = 0;
-        int bend = bidx;
-        while (bend < (int)nz_nodes.size()) {
-            int ni = nz_nodes[bend];
+        int batch_end = batch_begin;
+        while (batch_end < (int)nz_nodes.size()) {
+            int ni = nz_nodes[batch_end];
             long long p = (long long)(h_td_off[ni+1]-h_td_off[ni]) * (h_bu_off[ni+1]-h_bu_off[ni]);
             if (bprod_total + p > MAX_BATCH_PRODUCTS && bprod_total > 0) break;
             bprod_total += p;
-            ++bend;
+            ++batch_end;
         }
-        if (bprod_total == 0) { bidx = bend; continue; }
-        const int bc = bend - bidx;
+        if (bprod_total == 0) { batch_begin = batch_end; continue; }
+        const int batch_node_count = batch_end - batch_begin;
 
         // Build batch metadata on host
-        std::vector<int> h_btd_off(bc), h_bbu_off(bc), h_btd_sz(bc), h_bbu_sz(bc);
-        std::vector<int> h_bprod_off(bc + 1, 0);
-        for (int j = 0; j < bc; ++j) {
-            int ni = nz_nodes[bidx + j];
+        std::vector<int> h_btd_off(batch_node_count), h_bbu_off(batch_node_count), h_btd_sz(batch_node_count), h_bbu_sz(batch_node_count);
+        std::vector<int> h_bprod_off(batch_node_count + 1, 0);
+        for (int j = 0; j < batch_node_count; ++j) {
+            int ni = nz_nodes[batch_begin + j];
             h_btd_off[j] = h_td_off[ni];
             h_bbu_off[j] = h_bu_off[ni];
             h_btd_sz[j]  = h_td_off[ni+1] - h_td_off[ni];
             h_bbu_sz[j]  = h_bu_off[ni+1] - h_bu_off[ni];
             h_bprod_off[j+1] = h_bprod_off[j] + h_btd_sz[j] * h_bbu_sz[j];
         }
-        const int tbp = h_bprod_off[bc];
+        const int batch_product_count = h_bprod_off[batch_node_count];
         if (stats != NULL) {
-            stats->work_candidates_total += tbp;
+            stats->work_candidates_total += batch_product_count;
         }
 
         // Upload batch metadata
@@ -563,8 +563,8 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
 
         // ---- A: Cartesian product ----
         clock_t ca = clock();
-        thrust::device_vector<ObjType> d_bpts(tbp * NOBJS, 0);
-        cartesian_product_kernel<<<bc, kThreadsPerBlock>>>(
+        thrust::device_vector<ObjType> d_bpts(batch_product_count * NOBJS, 0);
+        materialize_cutset_products_kernel<<<batch_node_count, kThreadsPerBlock>>>(
             thrust::raw_pointer_cast(d_td_points.data()),
             thrust::raw_pointer_cast(d_btd_off.data()),
             thrust::raw_pointer_cast(d_bu_points.data()),
@@ -572,41 +572,41 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
             thrust::raw_pointer_cast(d_btd_sz.data()),
             thrust::raw_pointer_cast(d_bbu_sz.data()),
             thrust::raw_pointer_cast(d_bprod_off.data()),
-            bc,
+            batch_node_count,
             thrust::raw_pointer_cast(d_bpts.data()));
         if (!sync_kernel("cart_batch", reason)) return NULL;
         time_cart += (double)(clock()-ca)/CLOCKS_PER_SEC;
 
         // ---- B: Filter batch against frontier ----
         clock_t fa = clock();
-        int batch_surv = tbp;
+        int batch_surv = batch_product_count;
         thrust::device_vector<ObjType> d_surv;
 
-        if (frontier_size > 0 && tbp > 0) {
-            // Kill batch points dominated by any frontier point: O(tbp × frontier_size)
-            thrust::device_vector<int> d_alive_f(tbp, 0);
-            mark_dominated_by_frontier_kernel<<<ceil_div(tbp, kThreadsPerBlock), kThreadsPerBlock>>>(
-                thrust::raw_pointer_cast(d_bpts.data()), tbp,
+        if (frontier_size > 0 && batch_product_count > 0) {
+            // Kill batch points dominated by any frontier point.
+            thrust::device_vector<int> d_alive_f(batch_product_count, 0);
+            mark_dominated_by_frontier_kernel<<<ceil_div(batch_product_count, kThreadsPerBlock), kThreadsPerBlock>>>(
+                thrust::raw_pointer_cast(d_bpts.data()), batch_product_count,
                 thrust::raw_pointer_cast(d_frontier_pts.data()), frontier_size,
                 thrust::raw_pointer_cast(d_alive_f.data()));
             if (!sync_kernel("filt_frontier", reason)) return NULL;
 
-            thrust::device_vector<int> d_pfx_f(tbp, 0);
+            thrust::device_vector<int> d_pfx_f(batch_product_count, 0);
             thrust::exclusive_scan(d_alive_f.begin(), d_alive_f.end(), d_pfx_f.begin());
             batch_surv = thrust::reduce(d_alive_f.begin(), d_alive_f.end(), 0);
 
             if (batch_surv > 0) {
                 d_surv.resize(batch_surv * NOBJS);
-                scatter_alive_kernel<<<ceil_div(tbp, kThreadsPerBlock), kThreadsPerBlock>>>(
+                compact_alive_points_kernel<<<ceil_div(batch_product_count, kThreadsPerBlock), kThreadsPerBlock>>>(
                     thrust::raw_pointer_cast(d_alive_f.data()),
                     thrust::raw_pointer_cast(d_pfx_f.data()),
                     thrust::raw_pointer_cast(d_bpts.data()),
-                    thrust::raw_pointer_cast(d_surv.data()), tbp);
+                    thrust::raw_pointer_cast(d_surv.data()), batch_product_count);
                 if (!sync_kernel("scatter_filt", reason)) return NULL;
             }
         } else {
             d_surv = d_bpts;
-            batch_surv = tbp;
+            batch_surv = batch_product_count;
         }
         time_filt += (double)(clock()-fa)/CLOCKS_PER_SEC;
 
@@ -617,7 +617,7 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
             int kept_frontier = frontier_size;
             if (frontier_size > 0) {
                 thrust::device_vector<int> d_alive_old(frontier_size, 0);
-                mark_frontier_dominated_kernel<<<ceil_div(frontier_size, kThreadsPerBlock), kThreadsPerBlock>>>(
+                mark_frontier_dominated_by_batch_kernel<<<ceil_div(frontier_size, kThreadsPerBlock), kThreadsPerBlock>>>(
                     thrust::raw_pointer_cast(d_frontier_pts.data()), frontier_size,
                     thrust::raw_pointer_cast(d_surv.data()), batch_surv,
                     thrust::raw_pointer_cast(d_alive_old.data()));
@@ -629,7 +629,7 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
                     thrust::device_vector<int> d_pfx_old(frontier_size, 0);
                     thrust::exclusive_scan(d_alive_old.begin(), d_alive_old.end(), d_pfx_old.begin());
                     thrust::device_vector<ObjType> d_kept(kept_frontier * NOBJS);
-                    scatter_alive_kernel<<<ceil_div(frontier_size, kThreadsPerBlock), kThreadsPerBlock>>>(
+                    compact_alive_points_kernel<<<ceil_div(frontier_size, kThreadsPerBlock), kThreadsPerBlock>>>(
                         thrust::raw_pointer_cast(d_alive_old.data()),
                         thrust::raw_pointer_cast(d_pfx_old.data()),
                         thrust::raw_pointer_cast(d_frontier_pts.data()),
@@ -653,7 +653,7 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
         }
 
         ++num_batches;
-        bidx = bend;
+        batch_begin = batch_end;
     }
     t1 = clock();
     if (stats != NULL) {
@@ -664,7 +664,7 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
     clock_t fg0 = clock();
     if (frontier_size > 1) {
         thrust::device_vector<int> d_alive_final(frontier_size, 0);
-        mark_dominated_global_kernel<<<ceil_div(frontier_size, kThreadsPerBlock), kThreadsPerBlock>>>(
+        mark_globally_dominated_kernel<<<ceil_div(frontier_size, kThreadsPerBlock), kThreadsPerBlock>>>(
             thrust::raw_pointer_cast(d_frontier_pts.data()), frontier_size,
             thrust::raw_pointer_cast(d_alive_final.data()));
         if (!sync_kernel("final_dom", reason)) return NULL;
@@ -675,7 +675,7 @@ ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
 
         if (final_size < frontier_size) {
             thrust::device_vector<ObjType> d_final(final_size * NOBJS);
-            scatter_alive_kernel<<<ceil_div(frontier_size, kThreadsPerBlock), kThreadsPerBlock>>>(
+            compact_alive_points_kernel<<<ceil_div(frontier_size, kThreadsPerBlock), kThreadsPerBlock>>>(
                 thrust::raw_pointer_cast(d_alive_final.data()),
                 thrust::raw_pointer_cast(d_pfx_final.data()),
                 thrust::raw_pointer_cast(d_frontier_pts.data()),

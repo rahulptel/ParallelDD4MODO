@@ -36,11 +36,11 @@ struct PackedMDDLayer {
     thrust::device_vector<int> in_arc_counts;
 };
 
-int compute_layer_value(const thrust::device_vector<int>& offsets,
+int compute_expansion_score(const thrust::device_vector<int>& offsets,
                         const thrust::device_vector<int>& arc_counts,
                         int num_nodes);
 
-bool expand_layer_cuda(
+bool expand_layer_frontiers(
     const thrust::device_vector<int>& in_edge_offsets,
     const thrust::device_vector<int>& edge_src,
     const thrust::device_vector<ObjType>& edge_weights,

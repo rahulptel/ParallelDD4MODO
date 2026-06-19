@@ -7,18 +7,18 @@
 
 #include <cuda_runtime.h>
 
-ParetoFrontier* bdd_topdown_cuda_enumerate_impl(BDD* bdd,
+ParetoFrontier* enumerate_bdd_topdown(BDD* bdd,
                                                 bool maximization,
                                                 const int problem_type,
                                                 const int state_dominance,
                                                 EnumerationStats* stats,
                                                 std::string* reason);
 
-ParetoFrontier* mdd_topdown_cuda_enumerate_impl(MDD* mdd,
+ParetoFrontier* enumerate_mdd_topdown(MDD* mdd,
                                                 EnumerationStats* stats,
                                                 std::string* reason);
 
-ParetoFrontier* coupled_cuda_enumerate_impl(MDD* mdd,
+ParetoFrontier* enumerate_mdd_coupled(MDD* mdd,
                                             EnumerationStats* stats,
                                             std::string* reason);
 
@@ -79,7 +79,7 @@ ParetoFrontier* topdown_cuda_enumerate(BDD* bdd,
     if (!prepare_cuda_device(reason)) {
         return NULL;
     }
-    return bdd_topdown_cuda_enumerate_impl(bdd, maximization, problem_type, state_dominance, stats, reason);
+    return enumerate_bdd_topdown(bdd, maximization, problem_type, state_dominance, stats, reason);
 }
 
 ParetoFrontier* topdown_mdd_cuda_enumerate(MDD* mdd,
@@ -88,7 +88,7 @@ ParetoFrontier* topdown_mdd_cuda_enumerate(MDD* mdd,
     if (!prepare_cuda_device(reason)) {
         return NULL;
     }
-    return mdd_topdown_cuda_enumerate_impl(mdd, stats, reason);
+    return enumerate_mdd_topdown(mdd, stats, reason);
 }
 
 ParetoFrontier* coupled_cuda_enumerate(MDD* mdd,
@@ -97,5 +97,5 @@ ParetoFrontier* coupled_cuda_enumerate(MDD* mdd,
     if (!prepare_cuda_device(reason)) {
         return NULL;
     }
-    return coupled_cuda_enumerate_impl(mdd, stats, reason);
+    return enumerate_mdd_coupled(mdd, stats, reason);
 }

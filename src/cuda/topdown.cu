@@ -49,7 +49,7 @@ struct LayerDominanceContext {
 
 thread_local LayerDominanceContext* g_layer_dom_ctx = NULL;
 
-struct PackedCudaLayer {
+struct PackedBDDLayer {
     thrust::device_vector<int> in_edge_offsets;
     thrust::device_vector<int> edge_src;
     thrust::device_vector<ObjType> edge_weights;
@@ -220,7 +220,7 @@ inline bool fail_layer_filter(LayerDominanceContext* ctx, const std::string& mes
     return set_reason(ctx != NULL ? ctx->reason : NULL, message);
 }
 
-__global__ void compute_edge_counts_kernel(const int* edge_src,
+__global__ void count_edge_candidates_kernel(const int* edge_src,
                                            const int* prev_offsets,
                                            int* edge_counts,
                                            int num_edges) {
@@ -232,7 +232,7 @@ __global__ void compute_edge_counts_kernel(const int* edge_src,
     edge_counts[e] = prev_offsets[src + 1] - prev_offsets[src];
 }
 
-__global__ void compute_dst_candidate_counts_kernel(const int* in_edge_offsets,
+__global__ void count_destination_candidates_kernel(const int* in_edge_offsets,
                                                     const int* edge_offsets,
                                                     int next_nodes,
                                                     int* dst_counts,
@@ -250,7 +250,7 @@ __global__ void compute_dst_candidate_counts_kernel(const int* in_edge_offsets,
     }
 }
 
-__global__ void expand_candidates_points_kernel(const int* edge_src,
+__global__ void materialize_edge_candidates_kernel(const int* edge_src,
                                                 const ObjType* edge_weights,
                                                 const int* edge_offsets,
                                                 const int* edge_counts,
@@ -380,7 +380,7 @@ __global__ void mark_dominated_by_dst_dynamic_1d_kernel(const ObjType* points,
     }
 }
 
-__global__ void scatter_alive_points_kernel(const int* alive,
+__global__ void compact_alive_points_kernel(const int* alive,
                                             const int* alive_prefix,
                                             const ObjType* in_points,
                                             ObjType* out_points,
@@ -460,7 +460,7 @@ __global__ void recompute_sizes_from_keep_kernel(const int* offsets,
     out_sizes[node] = live;
 }
 
-__global__ void build_knapsack_cmp_pairs_kernel(const int* active_nodes,
+__global__ void build_knapsack_dominance_pairs_kernel(const int* active_nodes,
                                                 int active_size,
                                                 const int* single_parent_id,
                                                 const int* single_parent_arc,
@@ -512,7 +512,7 @@ struct IsPositiveInt {
     __host__ __device__ bool operator()(int x) const { return x > 0; }
 };
 
-inline bool apply_knapsack_state_dominance_cuda(BDD* bdd,
+inline bool apply_knapsack_state_dominance(BDD* bdd,
                                                 const int layer,
                                                 EnumerationStats* stats,
                                                 LayerDominanceContext* ctx) {
@@ -560,11 +560,11 @@ inline bool apply_knapsack_state_dominance_cuda(BDD* bdd,
     thrust::device_vector<int> d_cmp_node_a(num_targets, -1);
     thrust::device_vector<int> d_cmp_node_b(num_targets, -1);
 
-    ScopedCudaEventTimer build_pairs_timer("cudaEventCreate/build_knapsack_cmp_pairs_kernel", ctx->reason);
+    ScopedCudaEventTimer build_pairs_timer("cudaEventCreate/build_knapsack_dominance_pairs_kernel", ctx->reason);
     if (!build_pairs_timer.ok()) {
         return false;
     }
-    build_knapsack_cmp_pairs_kernel<<<ceil_div(num_targets, kThreadsPerBlock), kThreadsPerBlock>>>(
+    build_knapsack_dominance_pairs_kernel<<<ceil_div(num_targets, kThreadsPerBlock), kThreadsPerBlock>>>(
         thrust::raw_pointer_cast(d_active_nodes.data()),
         active_size,
         thrust::raw_pointer_cast(ctx->layer_single_parent_id->data()),
@@ -572,11 +572,11 @@ inline bool apply_knapsack_state_dominance_cuda(BDD* bdd,
         thrust::raw_pointer_cast(d_target_nodes.data()),
         thrust::raw_pointer_cast(d_cmp_node_a.data()),
         thrust::raw_pointer_cast(d_cmp_node_b.data()));
-    if (!sync_kernel("build_knapsack_cmp_pairs_kernel", ctx->reason)) {
+    if (!sync_kernel("build_knapsack_dominance_pairs_kernel", ctx->reason)) {
         return false;
     }
     if (!build_pairs_timer.finish_and_add(stats != NULL ? &stats->kernel_dominance_s : NULL,
-                                          "cudaEventElapsedTime/build_knapsack_cmp_pairs_kernel")) {
+                                          "cudaEventElapsedTime/build_knapsack_dominance_pairs_kernel")) {
         return false;
     }
 
@@ -638,21 +638,21 @@ inline bool apply_knapsack_state_dominance_cuda(BDD* bdd,
         thrust::device_vector<int> d_keep_prefix(old_total, 0);
         thrust::exclusive_scan(d_keep.begin(), d_keep.end(), d_keep_prefix.begin());
 
-        ScopedCudaEventTimer scatter_dom_timer("cudaEventCreate/scatter_alive_points_kernel_dominance", ctx->reason);
+        ScopedCudaEventTimer scatter_dom_timer("cudaEventCreate/compact_alive_points_kernel_dominance", ctx->reason);
         if (!scatter_dom_timer.ok()) {
             return false;
         }
-        scatter_alive_points_kernel<<<ceil_div(old_total, kThreadsPerBlock), kThreadsPerBlock>>>(
+        compact_alive_points_kernel<<<ceil_div(old_total, kThreadsPerBlock), kThreadsPerBlock>>>(
             thrust::raw_pointer_cast(d_keep.data()),
             thrust::raw_pointer_cast(d_keep_prefix.data()),
             thrust::raw_pointer_cast(ctx->next_points->data()),
             thrust::raw_pointer_cast(d_filtered_points.data()),
             old_total);
-        if (!sync_kernel("scatter_alive_points_kernel_dominance", ctx->reason)) {
+        if (!sync_kernel("compact_alive_points_kernel_dominance", ctx->reason)) {
             return false;
         }
         if (!scatter_dom_timer.finish_and_add(stats != NULL ? &stats->kernel_dominance_s : NULL,
-                                              "cudaEventElapsedTime/scatter_alive_points_kernel_dominance")) {
+                                              "cudaEventElapsedTime/compact_alive_points_kernel_dominance")) {
             return false;
         }
     }
@@ -693,13 +693,13 @@ void BDDMultiObj::filter_dominance_knapsack_cuda(BDD* bdd, const int layer, Enum
     if (ctx == NULL) {
         return;
     }
-    if (!apply_knapsack_state_dominance_cuda(bdd, layer, stats, ctx)) {
+    if (!apply_knapsack_state_dominance(bdd, layer, stats, ctx)) {
         ctx->failed = true;
     }
 }
 
 
-ParetoFrontier* bdd_topdown_cuda_enumerate_impl(BDD* bdd,
+ParetoFrontier* enumerate_bdd_topdown(BDD* bdd,
                                        bool maximization,
                                        const int problem_type,
                                        const int state_dominance,
@@ -732,7 +732,7 @@ ParetoFrontier* bdd_topdown_cuda_enumerate_impl(BDD* bdd,
         return NULL;
     }
 
-    std::vector<PackedCudaLayer> packed_layers;
+    std::vector<PackedBDDLayer> packed_layers;
     packed_layers.resize(bdd->num_layers);
 
     const int first_arc_type = maximization ? 1 : 0;
@@ -853,26 +853,26 @@ ParetoFrontier* bdd_topdown_cuda_enumerate_impl(BDD* bdd,
         thrust::device_vector<ObjType> d_next_points;
         thrust::device_vector<int> d_cand_counts(next_nodes, 0);
 
-        PackedCudaLayer& packed = packed_layers[l];
+        PackedBDDLayer& packed = packed_layers[l];
         const int num_edges = packed.edge_src.size();
         if (num_edges > 0) {
             thrust::device_vector<int> d_edge_counts(num_edges, 0);
             thrust::device_vector<int> d_edge_offsets(num_edges + 1, 0);
 
-            ScopedCudaEventTimer edge_counts_timer("cudaEventCreate/compute_edge_counts_kernel", reason);
+            ScopedCudaEventTimer edge_counts_timer("cudaEventCreate/count_edge_candidates_kernel", reason);
             if (!edge_counts_timer.ok()) {
                 return NULL;
             }
-            compute_edge_counts_kernel<<<ceil_div(num_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
+            count_edge_candidates_kernel<<<ceil_div(num_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
                 thrust::raw_pointer_cast(packed.edge_src.data()),
                 thrust::raw_pointer_cast(d_prev_offsets.data()),
                 thrust::raw_pointer_cast(d_edge_counts.data()),
                 num_edges);
-            if (!sync_kernel("compute_edge_counts_kernel", reason)) {
+            if (!sync_kernel("count_edge_candidates_kernel", reason)) {
                 return NULL;
             }
             if (!edge_counts_timer.finish_and_add(stats != NULL ? &stats->kernel_expand_td_s : NULL,
-                                                  "cudaEventElapsedTime/compute_edge_counts_kernel")) {
+                                                  "cudaEventElapsedTime/count_edge_candidates_kernel")) {
                 return NULL;
             }
 
@@ -885,21 +885,21 @@ ParetoFrontier* bdd_topdown_cuda_enumerate_impl(BDD* bdd,
 
             if (total_candidates > 0) {
                 thrust::device_vector<int> d_dst_blocks(next_nodes, 0);
-                ScopedCudaEventTimer dst_counts_timer("cudaEventCreate/compute_dst_candidate_counts_kernel_v3", reason);
+                ScopedCudaEventTimer dst_counts_timer("cudaEventCreate/count_destination_candidates_kernel_v3", reason);
                 if (!dst_counts_timer.ok()) {
                     return NULL;
                 }
-                compute_dst_candidate_counts_kernel<<<ceil_div(next_nodes, kThreadsPerBlock), kThreadsPerBlock>>>(
+                count_destination_candidates_kernel<<<ceil_div(next_nodes, kThreadsPerBlock), kThreadsPerBlock>>>(
                     thrust::raw_pointer_cast(packed.in_edge_offsets.data()),
                     thrust::raw_pointer_cast(d_edge_offsets.data()),
                     next_nodes,
                     thrust::raw_pointer_cast(d_cand_counts.data()),
                     thrust::raw_pointer_cast(d_dst_blocks.data()));
-                if (!sync_kernel("compute_dst_candidate_counts_kernel_v3", reason)) {
+                if (!sync_kernel("count_destination_candidates_kernel_v3", reason)) {
                     return NULL;
                 }
                 if (!dst_counts_timer.finish_and_add(stats != NULL ? &stats->kernel_expand_td_s : NULL,
-                                                     "cudaEventElapsedTime/compute_dst_candidate_counts_kernel_v3")) {
+                                                     "cudaEventElapsedTime/count_destination_candidates_kernel_v3")) {
                     return NULL;
                 }
                 layer_candidates_std = population_std_from_device_counts(d_cand_counts);
@@ -960,11 +960,11 @@ ParetoFrontier* bdd_topdown_cuda_enumerate_impl(BDD* bdd,
                         }
 
                         thrust::device_vector<ObjType> d_batch_cand_points(batch_total_candidates * NOBJS, 0);
-                        ScopedCudaEventTimer batch_expand_timer("cudaEventCreate/batch_expand_candidates_points_kernel", reason);
+                        ScopedCudaEventTimer batch_expand_timer("cudaEventCreate/batch_materialize_edge_candidates_kernel", reason);
                         if (!batch_expand_timer.ok()) {
                             return NULL;
                         }
-                        expand_candidates_points_kernel<<<ceil_div(batch_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
+                        materialize_edge_candidates_kernel<<<ceil_div(batch_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
                             thrust::raw_pointer_cast(packed.edge_src.data()) + edge_begin,
                             thrust::raw_pointer_cast(packed.edge_weights.data()) + edge_begin * NOBJS,
                             thrust::raw_pointer_cast(d_batch_edge_offsets.data()),
@@ -973,11 +973,11 @@ ParetoFrontier* bdd_topdown_cuda_enumerate_impl(BDD* bdd,
                             thrust::raw_pointer_cast(d_prev_points.data()),
                             batch_edges,
                             thrust::raw_pointer_cast(d_batch_cand_points.data()));
-                        if (!sync_kernel("batch_expand_candidates_points_kernel", reason)) {
+                        if (!sync_kernel("batch_materialize_edge_candidates_kernel", reason)) {
                             return NULL;
                         }
                         if (!batch_expand_timer.finish_and_add(stats != NULL ? &stats->kernel_expand_td_s : NULL,
-                                                               "cudaEventElapsedTime/batch_expand_candidates_points_kernel")) {
+                                                               "cudaEventElapsedTime/batch_materialize_edge_candidates_kernel")) {
                             return NULL;
                         }
                         if (stats != NULL &&
@@ -988,13 +988,13 @@ ParetoFrontier* bdd_topdown_cuda_enumerate_impl(BDD* bdd,
 
                         thrust::device_vector<int> d_batch_sizes(batch_nodes, 0);
                         thrust::device_vector<int> d_batch_blocks(batch_nodes, 0);
-                        compute_dst_candidate_counts_kernel<<<ceil_div(batch_nodes, kThreadsPerBlock), kThreadsPerBlock>>>(
+                        count_destination_candidates_kernel<<<ceil_div(batch_nodes, kThreadsPerBlock), kThreadsPerBlock>>>(
                             thrust::raw_pointer_cast(d_batch_in_offsets.data()),
                             thrust::raw_pointer_cast(d_batch_edge_offsets.data()),
                             batch_nodes,
                             thrust::raw_pointer_cast(d_batch_sizes.data()),
                             thrust::raw_pointer_cast(d_batch_blocks.data()));
-                        if (!sync_kernel("batch_compute_dst_candidate_counts_kernel", reason)) {
+                        if (!sync_kernel("batch_count_destination_candidates_kernel", reason)) {
                             return NULL;
                         }
 
@@ -1045,21 +1045,21 @@ ParetoFrontier* bdd_topdown_cuda_enumerate_impl(BDD* bdd,
 
                         thrust::device_vector<ObjType> d_batch_next_points(batch_total_next * NOBJS, 0);
                         if (batch_total_next > 0) {
-                            ScopedCudaEventTimer batch_scatter_timer("cudaEventCreate/batch_scatter_alive_points_kernel", reason);
+                            ScopedCudaEventTimer batch_scatter_timer("cudaEventCreate/batch_compact_alive_points_kernel", reason);
                             if (!batch_scatter_timer.ok()) {
                                 return NULL;
                             }
-                            scatter_alive_points_kernel<<<ceil_div(batch_total_candidates, kThreadsPerBlock), kThreadsPerBlock>>>(
+                            compact_alive_points_kernel<<<ceil_div(batch_total_candidates, kThreadsPerBlock), kThreadsPerBlock>>>(
                                 thrust::raw_pointer_cast(d_batch_alive.data()),
                                 thrust::raw_pointer_cast(d_batch_alive_prefix.data()),
                                 thrust::raw_pointer_cast(d_batch_cand_points.data()),
                                 thrust::raw_pointer_cast(d_batch_next_points.data()),
                                 batch_total_candidates);
-                            if (!sync_kernel("batch_scatter_alive_points_kernel", reason)) {
+                            if (!sync_kernel("batch_compact_alive_points_kernel", reason)) {
                                 return NULL;
                             }
                             if (!batch_scatter_timer.finish_and_add(stats != NULL ? &stats->kernel_expand_td_s : NULL,
-                                                                    "cudaEventElapsedTime/batch_scatter_alive_points_kernel")) {
+                                                                    "cudaEventElapsedTime/batch_compact_alive_points_kernel")) {
                                 return NULL;
                             }
 
@@ -1083,11 +1083,11 @@ ParetoFrontier* bdd_topdown_cuda_enumerate_impl(BDD* bdd,
                 } else {
                     thrust::device_vector<ObjType> d_cand_points(total_candidates * NOBJS, 0);
 
-                    ScopedCudaEventTimer expand_timer("cudaEventCreate/expand_candidates_points_kernel", reason);
+                    ScopedCudaEventTimer expand_timer("cudaEventCreate/materialize_edge_candidates_kernel", reason);
                     if (!expand_timer.ok()) {
                         return NULL;
                     }
-                    expand_candidates_points_kernel<<<ceil_div(num_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
+                    materialize_edge_candidates_kernel<<<ceil_div(num_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
                         thrust::raw_pointer_cast(packed.edge_src.data()),
                         thrust::raw_pointer_cast(packed.edge_weights.data()),
                         thrust::raw_pointer_cast(d_edge_offsets.data()),
@@ -1096,11 +1096,11 @@ ParetoFrontier* bdd_topdown_cuda_enumerate_impl(BDD* bdd,
                         thrust::raw_pointer_cast(d_prev_points.data()),
                         num_edges,
                         thrust::raw_pointer_cast(d_cand_points.data()));
-                    if (!sync_kernel("expand_candidates_points_kernel", reason)) {
+                    if (!sync_kernel("materialize_edge_candidates_kernel", reason)) {
                         return NULL;
                     }
                     if (!expand_timer.finish_and_add(stats != NULL ? &stats->kernel_expand_td_s : NULL,
-                                                     "cudaEventElapsedTime/expand_candidates_points_kernel")) {
+                                                     "cudaEventElapsedTime/materialize_edge_candidates_kernel")) {
                         return NULL;
                     }
                     // Primary peak checkpoint: candidate points are fully materialized before dominance compaction.
@@ -1152,21 +1152,21 @@ ParetoFrontier* bdd_topdown_cuda_enumerate_impl(BDD* bdd,
 
                     d_next_points.resize(total_next * NOBJS);
                     if (total_next > 0) {
-                        ScopedCudaEventTimer scatter_timer("cudaEventCreate/scatter_alive_points_kernel", reason);
+                        ScopedCudaEventTimer scatter_timer("cudaEventCreate/compact_alive_points_kernel", reason);
                         if (!scatter_timer.ok()) {
                             return NULL;
                         }
-                        scatter_alive_points_kernel<<<ceil_div(total_candidates, kThreadsPerBlock), kThreadsPerBlock>>>(
+                        compact_alive_points_kernel<<<ceil_div(total_candidates, kThreadsPerBlock), kThreadsPerBlock>>>(
                             thrust::raw_pointer_cast(d_alive.data()),
                             thrust::raw_pointer_cast(d_alive_prefix.data()),
                             thrust::raw_pointer_cast(d_cand_points.data()),
                             thrust::raw_pointer_cast(d_next_points.data()),
                             total_candidates);
-                        if (!sync_kernel("scatter_alive_points_kernel", reason)) {
+                        if (!sync_kernel("compact_alive_points_kernel", reason)) {
                             return NULL;
                         }
                         if (!scatter_timer.finish_and_add(stats != NULL ? &stats->kernel_expand_td_s : NULL,
-                                                          "cudaEventElapsedTime/scatter_alive_points_kernel")) {
+                                                          "cudaEventElapsedTime/compact_alive_points_kernel")) {
                             return NULL;
                         }
                     }
@@ -1254,7 +1254,7 @@ ParetoFrontier* bdd_topdown_cuda_enumerate_impl(BDD* bdd,
 // MDD GPU Top-Down Enumeration
 // ---------------------------------------------------------------
 
-ParetoFrontier* mdd_topdown_cuda_enumerate_impl(MDD* mdd,
+ParetoFrontier* enumerate_mdd_topdown(MDD* mdd,
                                            EnumerationStats* stats,
                                            std::string* reason) {
     if (mdd == NULL) { set_reason(reason, "MDD is NULL"); return NULL; }
@@ -1277,18 +1277,18 @@ ParetoFrontier* mdd_topdown_cuda_enumerate_impl(MDD* mdd,
     t0 = clock();
     std::vector<PackedMDDLayer> packed(num_layers);
     for (int l = 0; l < num_layers; ++l) {
-        const int nn = mdd->layers[l].size();
-        packed[l].num_nodes = nn;
+        const int num_nodes = mdd->layers[l].size();
+        packed[l].num_nodes = num_nodes;
 
         if (l > 0) {
-            std::vector<int> h_off(nn + 1, 0);
-            for (int d = 0; d < nn; ++d)
+            std::vector<int> h_off(num_nodes + 1, 0);
+            for (int d = 0; d < num_nodes; ++d)
                 h_off[d + 1] = h_off[d] + mdd->layers[l][d]->in_arcs_list.size();
-            const int ne = h_off[nn];
-            std::vector<int> h_src(ne);
-            std::vector<ObjType> h_wt(ne * NOBJS);
+            const int num_edges = h_off[num_nodes];
+            std::vector<int> h_src(num_edges);
+            std::vector<ObjType> h_wt(num_edges * NOBJS);
             int idx = 0;
-            for (int d = 0; d < nn; ++d) {
+            for (int d = 0; d < num_nodes; ++d) {
                 for (MDDArc* a : mdd->layers[l][d]->in_arcs_list) {
                     h_src[idx] = a->tail->index;
                     for (int o = 0; o < NOBJS; ++o)
@@ -1296,7 +1296,7 @@ ParetoFrontier* mdd_topdown_cuda_enumerate_impl(MDD* mdd,
                     ++idx;
                 }
             }
-            packed[l].td_num_edges = ne;
+            packed[l].td_num_edges = num_edges;
             packed[l].td_in_edge_offsets = h_off;
             packed[l].td_edge_src = h_src;
             packed[l].td_edge_weights = h_wt;
@@ -1324,27 +1324,27 @@ ParetoFrontier* mdd_topdown_cuda_enumerate_impl(MDD* mdd,
 
     // 3. Expand layer by layer
     for (int l = 1; l < num_layers; ++l) {
-        const int nn = packed[l].num_nodes;
-        thrust::device_vector<int> d_ns, d_no;
-        thrust::device_vector<ObjType> d_np;
+        const int num_nodes = packed[l].num_nodes;
+        thrust::device_vector<int> next_sizes, next_offsets;
+        thrust::device_vector<ObjType> next_points;
         long long layer_candidates = 0;
         long long layer_survivors = 0;
         double layer_candidates_std = 0.0;
         double layer_survivors_std = 0.0;
 
-        ScopedCudaEventTimer layer_expand_timer("cudaEventCreate/expand_layer_cuda", reason);
+        ScopedCudaEventTimer layer_expand_timer("cudaEventCreate/expand_layer_frontiers", reason);
         if (!layer_expand_timer.ok()) {
             return NULL;
         }
         t0 = clock();
-        if (!expand_layer_cuda(
+        if (!expand_layer_frontiers(
                     packed[l].td_in_edge_offsets,
                     packed[l].td_edge_src,
                     packed[l].td_edge_weights,
                     packed[l].td_num_edges,
-                    nn,
+                    num_nodes,
                     d_td_offsets, d_td_points,
-                    d_ns, d_no, d_np, reason,
+                    next_sizes, next_offsets, next_points, reason,
                     &layer_candidates, &layer_survivors,
                     &layer_candidates_std, &layer_survivors_std,
                     stats != NULL ? &gpu_mem_baseline_used_bytes : NULL,
@@ -1353,7 +1353,7 @@ ParetoFrontier* mdd_topdown_cuda_enumerate_impl(MDD* mdd,
             return NULL;
         }
         if (!layer_expand_timer.finish_and_add(stats != NULL ? &stats->kernel_expand_td_s : NULL,
-                                               "cudaEventElapsedTime/expand_layer_cuda")) {
+                                               "cudaEventElapsedTime/expand_layer_frontiers")) {
             return NULL;
         }
         t1 = clock();
@@ -1367,9 +1367,9 @@ ParetoFrontier* mdd_topdown_cuda_enumerate_impl(MDD* mdd,
             if (!sample_gpu_memory_peak(reason, gpu_mem_baseline_used_bytes, &gpu_mem_peak_used_bytes, &gpu_mem_peak_reserved_bytes)) return NULL;
         }
 
-        d_td_sizes.swap(d_ns);
-        d_td_offsets.swap(d_no);
-        d_td_points.swap(d_np);
+        d_td_sizes.swap(next_sizes);
+        d_td_offsets.swap(next_offsets);
+        d_td_points.swap(next_points);
     }
 
     // 4. Extract points from terminal node
@@ -1396,7 +1396,7 @@ ParetoFrontier* mdd_topdown_cuda_enumerate_impl(MDD* mdd,
     }
 
     // Optional: we can apply a final sort/dominance filter here if we expect duplicate equivalent paths, 
-    // but the node dominance filter inside `expand_layer_cuda` handles standard local state dominance.
+    // but the node dominance filter inside `expand_layer_frontiers` handles standard local state dominance.
 
     if (reason != NULL) reason->clear();
     if (stats != NULL) {

@@ -118,7 +118,7 @@ inline double population_std_from_device_counts(const thrust::device_vector<int>
 // Kernels for MDD layer expansion.
 // ---------------------------------------------------------------
 
-__global__ void compute_edge_counts_kernel(const int* edge_src,
+__global__ void count_edge_candidates_kernel(const int* edge_src,
                                            const int* prev_offsets,
                                            int* edge_counts,
                                            int num_edges) {
@@ -128,7 +128,7 @@ __global__ void compute_edge_counts_kernel(const int* edge_src,
     edge_counts[e] = prev_offsets[src + 1] - prev_offsets[src];
 }
 
-__global__ void compute_dst_candidate_counts_kernel(const int* in_edge_offsets,
+__global__ void count_destination_candidates_kernel(const int* in_edge_offsets,
                                                     const int* edge_offsets,
                                                     int next_nodes,
                                                     int* dst_counts,
@@ -144,7 +144,7 @@ __global__ void compute_dst_candidate_counts_kernel(const int* in_edge_offsets,
     }
 }
 
-__global__ void expand_candidates_points_kernel(const int* edge_src,
+__global__ void materialize_edge_candidates_kernel(const int* edge_src,
                                                 const ObjType* edge_weights,
                                                 const int* edge_offsets,
                                                 const int* edge_counts,
@@ -189,19 +189,19 @@ __device__ int find_dst_node(int block_idx, const int* block_offsets, int next_n
     return low;
 }
 
-// mark_dominated_1d_kernel uses a strictly load balanced 1D grid.
-__global__ void mark_dominated_1d_kernel(const ObjType* points,
+// mark_local_dominated_kernel uses a strictly load balanced 1D grid.
+__global__ void mark_local_dominated_kernel(const ObjType* points,
                                          const int* in_edge_offsets,
                                          const int* edge_offsets,
                                          const int* block_offsets,
                                          int next_nodes,
                                          int* alive,
                                          int* next_sizes) {
-    const int bidx = blockIdx.x;
-    const int dst = find_dst_node(bidx, block_offsets, next_nodes);
+    const int block_index = blockIdx.x;
+    const int dst = find_dst_node(block_index, block_offsets, next_nodes);
     if (dst >= next_nodes) return;
 
-    const int tile_i = bidx - block_offsets[dst];
+    const int tile_i = block_index - block_offsets[dst];
 
     const int eb = in_edge_offsets[dst];
     const int ee = in_edge_offsets[dst + 1];
@@ -258,7 +258,7 @@ __global__ void mark_dominated_1d_kernel(const ObjType* points,
     if (threadIdx.x == 0) atomicAdd(&next_sizes[dst], lv[0]);
 }
 
-__global__ void scatter_alive_kernel(const int* alive,
+__global__ void compact_alive_points_kernel(const int* alive,
                                      const int* prefix,
                                      const ObjType* in_pts,
                                      ObjType* out_pts,
@@ -271,7 +271,7 @@ __global__ void scatter_alive_kernel(const int* alive,
 }
 
 // Layer-value heuristic: sum_i( sizes[i] * arc_counts[i] )
-__global__ void layer_value_kernel(const int* offsets, const int* arc_counts,
+__global__ void compute_layer_score_kernel(const int* offsets, const int* arc_counts,
                                    int* out, int n) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     if (i >= n) return;
@@ -284,10 +284,10 @@ __global__ void layer_value_kernel(const int* offsets, const int* arc_counts,
 } // anonymous namespace
 
 // ---------------------------------------------------------------
-// expand_layer_cuda: runs expansion kernels for one MDD layer.
+// expand_layer_frontiers: runs expansion kernels for one MDD layer.
 // Works identically for top-down and bottom-up.
 // ---------------------------------------------------------------
-bool expand_layer_cuda(
+bool expand_layer_frontiers(
     const thrust::device_vector<int>& in_edge_offsets,
     const thrust::device_vector<int>& edge_src,
     const thrust::device_vector<ObjType>& edge_weights,
@@ -331,7 +331,7 @@ bool expand_layer_cuda(
     thrust::device_vector<int> d_ec(num_edges, 0);
     thrust::device_vector<int> d_eo(num_edges + 1, 0);
 
-    compute_edge_counts_kernel<<<ceil_div(num_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
+    count_edge_candidates_kernel<<<ceil_div(num_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
         thrust::raw_pointer_cast(edge_src.data()),
         thrust::raw_pointer_cast(d_prev_offsets.data()),
         thrust::raw_pointer_cast(d_ec.data()),
@@ -355,7 +355,7 @@ bool expand_layer_cuda(
     thrust::device_vector<int> d_cc(next_nodes, 0);
     thrust::device_vector<int> d_blocks(next_nodes, 0);
 
-    compute_dst_candidate_counts_kernel<<<ceil_div(next_nodes, kThreadsPerBlock), kThreadsPerBlock>>>(
+    count_destination_candidates_kernel<<<ceil_div(next_nodes, kThreadsPerBlock), kThreadsPerBlock>>>(
         thrust::raw_pointer_cast(in_edge_offsets.data()),
         thrust::raw_pointer_cast(d_eo.data()),
         next_nodes,
@@ -422,7 +422,7 @@ bool expand_layer_cuda(
             }
 
             thrust::device_vector<ObjType> d_batch_cand(batch_total_cand * NOBJS, 0);
-            expand_candidates_points_kernel<<<ceil_div(batch_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
+            materialize_edge_candidates_kernel<<<ceil_div(batch_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
                 thrust::raw_pointer_cast(edge_src.data()) + edge_begin,
                 thrust::raw_pointer_cast(edge_weights.data()) + edge_begin * NOBJS,
                 thrust::raw_pointer_cast(d_batch_eo.data()),
@@ -448,7 +448,7 @@ bool expand_layer_cuda(
 
             thrust::device_vector<int> d_batch_sizes(batch_nodes, 0);
             thrust::device_vector<int> d_batch_blocks(batch_nodes, 0);
-            compute_dst_candidate_counts_kernel<<<ceil_div(batch_nodes, kThreadsPerBlock), kThreadsPerBlock>>>(
+            count_destination_candidates_kernel<<<ceil_div(batch_nodes, kThreadsPerBlock), kThreadsPerBlock>>>(
                 thrust::raw_pointer_cast(d_batch_in_offsets.data()),
                 thrust::raw_pointer_cast(d_batch_eo.data()),
                 batch_nodes,
@@ -472,7 +472,7 @@ bool expand_layer_cuda(
 
                 const int total_blocks = d_batch_block_offsets[batch_nodes];
                 if (total_blocks > 0) {
-                    mark_dominated_1d_kernel<<<total_blocks, kThreadsPerBlock>>>(
+                    mark_local_dominated_kernel<<<total_blocks, kThreadsPerBlock>>>(
                         thrust::raw_pointer_cast(d_batch_cand.data()),
                         thrust::raw_pointer_cast(d_batch_in_offsets.data()),
                         thrust::raw_pointer_cast(d_batch_eo.data()),
@@ -492,7 +492,7 @@ bool expand_layer_cuda(
 
             thrust::device_vector<ObjType> d_batch_next_points(batch_total_next * NOBJS, 0);
             if (batch_total_next > 0) {
-                scatter_alive_kernel<<<ceil_div(batch_total_cand, kThreadsPerBlock), kThreadsPerBlock>>>(
+                compact_alive_points_kernel<<<ceil_div(batch_total_cand, kThreadsPerBlock), kThreadsPerBlock>>>(
                     thrust::raw_pointer_cast(d_batch_alive.data()),
                     thrust::raw_pointer_cast(d_batch_alive_prefix.data()),
                     thrust::raw_pointer_cast(d_batch_cand.data()),
@@ -529,7 +529,7 @@ bool expand_layer_cuda(
 
     // Expand candidate points
     thrust::device_vector<ObjType> d_cand(total_cand * NOBJS, 0);
-    expand_candidates_points_kernel<<<ceil_div(num_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
+    materialize_edge_candidates_kernel<<<ceil_div(num_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
         thrust::raw_pointer_cast(edge_src.data()),
         thrust::raw_pointer_cast(edge_weights.data()),
         thrust::raw_pointer_cast(d_eo.data()),
@@ -563,7 +563,7 @@ bool expand_layer_cuda(
 
         const int total_blocks = d_block_offsets[next_nodes];
         if (total_blocks > 0) {
-            mark_dominated_1d_kernel<<<total_blocks, kThreadsPerBlock>>>(
+            mark_local_dominated_kernel<<<total_blocks, kThreadsPerBlock>>>(
                 thrust::raw_pointer_cast(d_cand.data()),
                 thrust::raw_pointer_cast(in_edge_offsets.data()),
                 thrust::raw_pointer_cast(d_eo.data()),
@@ -591,7 +591,7 @@ bool expand_layer_cuda(
 
     d_next_points.resize(total_next * NOBJS);
     if (total_next > 0) {
-        scatter_alive_kernel<<<ceil_div(total_cand, kThreadsPerBlock), kThreadsPerBlock>>>(
+        compact_alive_points_kernel<<<ceil_div(total_cand, kThreadsPerBlock), kThreadsPerBlock>>>(
             thrust::raw_pointer_cast(d_alive.data()),
             thrust::raw_pointer_cast(d_ap.data()),
             thrust::raw_pointer_cast(d_cand.data()),
@@ -603,12 +603,12 @@ bool expand_layer_cuda(
 }
 
 // Compute layer value heuristic on GPU, return scalar to host
-int compute_layer_value(const thrust::device_vector<int>& offsets,
+int compute_expansion_score(const thrust::device_vector<int>& offsets,
                         const thrust::device_vector<int>& arc_counts,
                         int num_nodes) {
     if (num_nodes <= 0) return 0;
     thrust::device_vector<int> tmp(num_nodes, 0);
-    layer_value_kernel<<<ceil_div(num_nodes, kThreadsPerBlock), kThreadsPerBlock>>>(
+    compute_layer_score_kernel<<<ceil_div(num_nodes, kThreadsPerBlock), kThreadsPerBlock>>>(
         thrust::raw_pointer_cast(offsets.data()),
         thrust::raw_pointer_cast(arc_counts.data()),
         thrust::raw_pointer_cast(tmp.data()),
