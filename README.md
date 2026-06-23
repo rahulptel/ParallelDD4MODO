@@ -198,10 +198,10 @@ If `--cpu-threads` is omitted in an OpenMP build, the program uses
 GPU options:
 
 ```bash
---gpu-batch <N>
+--max-cand <N>
 ```
 
-`--gpu-batch` overrides the CUDA candidate batch cap. It accepts plain positive
+`--max-cand` overrides the CUDA candidate batch cap. It accepts plain positive
 integers or `K`, `M`, `B` decimal suffixes, such as `500K`, `20M`, or `2B`.
 The default is `20M`.
 
@@ -267,7 +267,7 @@ make NUM_OBJS=3 ENABLE_CUDA=1 ENABLE_OPENMP=1
 
 ./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 1 0 \
   --backend gpu \
-  --gpu-batch 20M \
+  --max-cand 20M \
   --save-stats --stats-out test.gpu.stats.jsonl
 ```
 

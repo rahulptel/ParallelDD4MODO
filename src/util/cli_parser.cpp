@@ -206,7 +206,7 @@ void print_usage()
     cout << "\t\t--frontier-out <path>: save Pareto frontier to explicit gzip CSV path\n";
     cout << "\t\t--save-stats: save one JSONL record with run statistics\n";
     cout << "\t\t--stats-out <path>: save JSONL statistics to explicit path\n";
-    cout << "\t\t--gpu-batch <N>: GPU candidate batch cap; supports K, M, B suffixes (default 20M)\n";
+    cout << "\t\t--max-cand <N>: GPU candidate batch cap; supports K, M, B suffixes (default 20M)\n";
     cout << "\t\toptional arguments can be provided in any order\n";
 
     cout << endl;
@@ -339,13 +339,13 @@ bool parse_cli_args(int argc, char *argv[], CliOptions *out, string *error)
             }
             cpu_threads_set = true;
         }
-        else if (token == "--gpu-batch")
+        else if (token == "--max-cand")
         {
             if (gpu_batch_set)
             {
                 if (error != NULL)
                 {
-                    *error = "Error - GPU batch size provided multiple times.";
+                    *error = "Error - GPU candidate batch cap provided multiple times.";
                 }
                 return false;
             }
@@ -353,7 +353,7 @@ bool parse_cli_args(int argc, char *argv[], CliOptions *out, string *error)
             {
                 if (error != NULL)
                 {
-                    *error = "Error - --gpu-batch requires a positive integer, optionally using K, M, or B suffix.";
+                    *error = "Error - --max-cand requires a positive integer, optionally using K, M, or B suffix.";
                 }
                 return false;
             }
@@ -362,7 +362,7 @@ bool parse_cli_args(int argc, char *argv[], CliOptions *out, string *error)
             {
                 if (error != NULL)
                 {
-                    *error = "Error - invalid --gpu-batch value '" + value + "' (expected positive integer with optional K, M, or B suffix).";
+                    *error = "Error - invalid --max-cand value '" + value + "' (expected positive integer with optional K, M, or B suffix).";
                 }
                 return false;
             }
@@ -530,7 +530,7 @@ bool parse_cli_args(int argc, char *argv[], CliOptions *out, string *error)
     {
         if (error != NULL)
         {
-            *error = "Error - --gpu-batch is only valid with backend=gpu.";
+            *error = "Error - --max-cand is only valid with backend=gpu.";
         }
         return false;
     }

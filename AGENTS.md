@@ -67,8 +67,8 @@ Backend options:
 - Shorthand form: `cpu [num_threads]` or `gpu`.
 - `cuda` is rejected; use `gpu`.
 - `--cpu-threads <N>` requires an OpenMP-enabled build.
-- GPU candidate batch cap can be overridden with `--gpu-batch <N>`.
-- `--gpu-batch` accepts plain positive integers or suffixes `K`, `M`, `B`
+- GPU candidate batch cap can be overridden with `--max-cand <N>`.
+- `--max-cand` accepts plain positive integers or suffixes `K`, `M`, `B`
   for decimal thousands/millions/billions; default is `20M`.
 
 Output options:
