@@ -161,7 +161,6 @@ JSONL stats are written by `src/util/output_utils.cpp` and include identity, out
   - `stats.hpp`: `EnumerationStats` and `DDStats` structures.
   - `omp_compat.hpp`, `cpu_affinity.*`: OpenMP compatibility and CPU thread pinning.
   - `util.hpp/.cpp`: Common math and print helpers.
-  - `gpu_options.hpp`: Global configuration options for GPU kernels (e.g. maximum transition queue capacity).
 - `src/bdd/`
   - `bdd.hpp`: BDD node/arc structure and maintenance methods.
   - `bdd_alg.hpp`: BDD reduction logic; `bdd_alg.cpp` is effectively empty.
@@ -190,6 +189,12 @@ JSONL stats are written by `src/util/output_utils.cpp` and include identity, out
   - Included benchmark/input data for objective dimensions `3..7`.
 - `cc/`
   - Experiment/job-script support directories.
+- `kb/`
+  - Repository-local knowledge base. Here `kb` means knowledge base.
+  - `MEMORY.md`: durable cleanup and implementation history.
+  - `GPU_NOTES.md`: GPU implementation notes.
+  - `autoresearch/TASK.md`, `TSP_STATUS.md`, `ideas.md`, `results.tsv`: GPU TSP autoresearch task context and run log.
+  - Some knowledge-base notes were written against older branch paths such as `src/cuda/*`; when they conflict with this checkout, use the current `src/enum/gpu/*` and `src/enum/cpu/*` code layout.
 
 ## 6) Input Format Cheat Sheet
 - Knapsack (`src/instances/knapsack_instance.cpp`):
@@ -243,6 +248,7 @@ State dominance:
 - Run `make -n` before full builds when changing build flags or source lists.
 - For CPU-only verification, use `ENABLE_CUDA=0` to avoid requiring `nvcc`.
 - For GPU changes, verify the CUDA build path and the relevant runtime branch if hardware/tooling is available.
+- For GPU TSP autoresearch or cleanup work, read the relevant `kb/` knowledge-base files before editing, but re-check all source paths against the current tree.
 - When adding a problem type:
   - Add or complete the parser in `src/instances/`.
   - Add a BDD or MDD constructor.

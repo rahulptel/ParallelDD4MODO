@@ -27,14 +27,14 @@ For example, a 3-objective build produces `multiobj_nobjs3`. Use a binary whose
 |   |-- mdd/              # MDD data structures and TSP MDD constructor
 |   |-- instances/        # Input parsers for knapsack, set packing, independent set, TSP
 |   |-- enum/             # Pareto frontier algorithms and enumeration dispatch
-|   |   |-- cpu/          # CPU-based BFS, bottom-up, and layer cutset coupling algorithms
+|   |   |-- cpu/          # CPU top-down, bottom-up, and dynamic layer cutset algorithms
 |   |   |-- gpu/          # CUDA kernels/wrappers for GPU-based BFS and dynamic layer cutset
 |   |   |-- pareto_frontier.hpp  # Nondominated frontier container and merge/convolution logic
 |   |   `-- multiobj_enum.hpp/.cpp # Central dispatch hub for CPU/GPU frontier enumeration
-|   `-- util/             # CLI parsing, output, stats, OpenMP helpers, CPU affinity, GPU options
+|   `-- util/             # CLI parsing, output, stats, OpenMP helpers, CPU affinity
 |-- data/                 # Benchmark/test instances grouped by objective count
 |-- cc/                   # Cluster/experiment job scripts and tables
-`-- results/              # Result summaries and plotting scripts, when present
+`-- kb/                   # Knowledge base: run notes, cleanup memory, autoresearch task files
 ```
 
 The currently wired problem types are:
@@ -71,6 +71,13 @@ GPU/CUDA enumeration methods (`src/enum/gpu/`):
 - `enum_types.cuh` and `dominance_utils.cuh`: CUDA-specific type definitions and device utility functions.
 - `cuda_stubs.cpp`: Stub implementations used during CPU-only builds (`ENABLE_CUDA=0`).
 - `cuda_wrappers.hpp`: GPU method declarations.
+
+The `kb/` directory is the repository-local knowledge base. It keeps durable
+implementation notes (`kb/MEMORY.md`, `kb/GPU_NOTES.md`) and autoresearch
+context (`kb/autoresearch/TASK.md`, `TSP_STATUS.md`, `ideas.md`,
+`results.tsv`). Some notes record older source paths from prior branches; when
+those notes disagree with the current tree, use the current `src/enum/gpu/`
+and `src/enum/cpu/` layout as authoritative.
 
 ## Build
 
