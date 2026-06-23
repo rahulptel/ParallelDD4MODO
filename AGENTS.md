@@ -64,11 +64,9 @@ Methods:
 Backend options:
 - Default backend is CPU.
 - Named form: `--backend cpu|gpu`.
-- Shorthand form: `cpu [num_threads]` or `gpu [3]`.
+- Shorthand form: `cpu [num_threads]` or `gpu`.
 - `cuda` is rejected; use `gpu`.
 - `--cpu-threads <N>` requires an OpenMP-enabled build.
-- `--cpu-kernel <1|3>` selects the CPU kernel variant for methods `1` and `3`.
-- `--kernel 3` is accepted for GPU compatibility only.
 
 Output options:
 - `--save-frontier` writes `<input_stem>.frontier.csv.gz`.
@@ -77,8 +75,8 @@ Output options:
 - `--stats-out <path>` implies `--save-stats`; default is `<input_stem>.stats.jsonl`.
 
 GPU support in current dispatch:
-- BDD knapsack/set-packing: GPU is implemented for method `1` only.
-- BDD method `2` and BDD method `3` reject GPU.
+- BDD knapsack/set-packing: GPU is implemented for methods `1` and `3`.
+- BDD method `2` rejects GPU.
 - TSP/MDD: GPU is implemented for methods `1` and `3`.
 - TSP method `2` is not accepted in `main`.
 - CPU methods support OpenMP threading when built with `ENABLE_OPENMP=1`.
@@ -97,13 +95,13 @@ make NUM_OBJS=3 ENABLE_CUDA=0 ENABLE_OPENMP=1
 Run top-down enumeration on CPU with threads (`method=1`):
 
 ```bash
-./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 1 0 --backend cpu --cpu-threads 8 --cpu-kernel 1
+./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 1 0 --backend cpu --cpu-threads 8
 ```
 
 Run coupled enumeration on CPU with threads (`method=3`, dynamic layer cutset):
 
 ```bash
-./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 3 0 --backend cpu --cpu-threads 8 --cpu-kernel 3
+./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 3 0 --backend cpu --cpu-threads 8
 ```
 
 Build a CUDA-enabled binary:
@@ -116,7 +114,7 @@ make NUM_OBJS=3 ENABLE_CUDA=1 ENABLE_OPENMP=1
 Run GPU-based top-down enumeration (`method=1`):
 
 ```bash
-./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 1 0 --backend gpu --kernel 3
+./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 1 0 --backend gpu
 ```
 
 For set packing, keep the same method/backend pattern and change

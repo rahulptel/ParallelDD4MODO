@@ -11,7 +11,7 @@ bin/multiobj_nobjs5_gpu
 Command pattern:
 
 ```bash
-./bin/multiobj_nobjs5_gpu <instance> 3 1 0 --backend gpu --kernel 3
+./bin/multiobj_nobjs5_gpu <instance> 3 1 0 --backend gpu
 ```
 
 This uses TSP (`problem_type=3`), top-down enumeration (`method=1`), no state
@@ -42,7 +42,7 @@ The instance that memory-outed on GPU top-down was rerun with CPU coupled
 enumeration using 16 threads:
 
 ```bash
-./bin/multiobj_nobjs5_cpu ./data/5/tsp/tsp-nobj5-ncities15-seed13095.dat 3 3 0 --backend cpu --cpu-threads 16 --cpu-kernel 3
+./bin/multiobj_nobjs5_cpu ./data/5/tsp/tsp-nobj5-ncities15-seed13095.dat 3 3 0 --backend cpu --cpu-threads 16
 ```
 
 | Instance | Backend | Method | Threads | Status | Solutions | CPU total (s) | CPU compile (s) | CPU enumeration (s) | Wall compile (s) | Wall enumeration (s) |

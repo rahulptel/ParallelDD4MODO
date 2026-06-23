@@ -183,24 +183,17 @@ Backend options:
 ```bash
 --backend cpu|gpu
 cpu [num_threads]
-gpu [3]
+gpu
 ```
 
 CPU options:
 
 ```bash
 --cpu-threads <N>
---cpu-kernel <1|3>
 ```
 
 If `--cpu-threads` is omitted in an OpenMP build, the program uses
 `OMP_NUM_THREADS` when it is a valid positive integer, otherwise `1`.
-
-GPU options:
-
-```bash
---kernel 3
-```
 
 The token `cuda` is intentionally rejected; use `gpu`.
 
@@ -224,8 +217,8 @@ corresponding save option.
 For knapsack and set packing BDDs:
 
 - CPU supports methods `1`, `2`, and `3`.
-- GPU supports method `1`.
-- GPU methods `2` and `3` fail fast as unsupported.
+- GPU supports methods `1` and `3`.
+- GPU method `2` fails fast as unsupported.
 
 For TSP MDDs:
 
@@ -244,7 +237,7 @@ make clean
 make NUM_OBJS=3 ENABLE_CUDA=0 ENABLE_OPENMP=1
 
 ./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 1 0 \
-  --backend cpu --cpu-threads 4 --cpu-kernel 1 \
+  --backend cpu --cpu-threads 4 \
   --save-stats --stats-out test.cpu.stats.jsonl
 ```
 
@@ -252,7 +245,7 @@ make NUM_OBJS=3 ENABLE_CUDA=0 ENABLE_OPENMP=1
 
 ```bash
 ./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 3 0 \
-  --backend cpu --cpu-threads 4 --cpu-kernel 3 \
+  --backend cpu --cpu-threads 4 \
   --save-frontier --frontier-out test.cpu.frontier.csv.gz
 ```
 
@@ -263,7 +256,7 @@ make clean
 make NUM_OBJS=3 ENABLE_CUDA=1 ENABLE_OPENMP=1
 
 ./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 1 0 \
-  --backend gpu --kernel 3 \
+  --backend gpu \
   --save-stats --stats-out test.gpu.stats.jsonl
 ```
 
@@ -271,7 +264,7 @@ make NUM_OBJS=3 ENABLE_CUDA=1 ENABLE_OPENMP=1
 
 ```bash
 ./multiobj_nobjs3 data/3/tsp/tsp-nobj3-ncities5-seed495.dat 3 1 0 \
-  --backend cpu --cpu-threads 4 --cpu-kernel 1
+  --backend cpu --cpu-threads 4
 ```
 
 Successful runs always print three lines:

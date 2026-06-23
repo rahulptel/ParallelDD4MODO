@@ -93,7 +93,7 @@ make NUM_OBJS=5 ENABLE_CUDA=1 ENABLE_OPENMP=1
 Run the target GPU experiment:
 
 ```bash
-./multiobj_nobjs5 ./data/5/tsp/tsp-nobj5-ncities15-seed13095.dat 3 1 0 --backend gpu --kernel 3
+./multiobj_nobjs5 ./data/5/tsp/tsp-nobj5-ncities15-seed13095.dat 3 1 0 --backend gpu
 ```
 
 If the sandbox cannot see the GPU and reports:
@@ -149,7 +149,7 @@ Repeat indefinitely until interrupted:
 6. Run the target command and redirect logs:
    ```bash
    mkdir -p reports/autoresearch
-   timeout 5m ./multiobj_nobjs5 ./data/5/tsp/tsp-nobj5-ncities15-seed13095.dat 3 1 0 --backend gpu --kernel 3 \
+   timeout 5m ./multiobj_nobjs5 ./data/5/tsp/tsp-nobj5-ncities15-seed13095.dat 3 1 0 --backend gpu \
      > reports/autoresearch/run.log 2> reports/autoresearch/run.err
    ```
 7. Parse stdout/stderr. Determine:

@@ -7,9 +7,8 @@ Pareto filter and scatters survivors.
 
 ## Current GPU Shape
 
-The active GPU implementation is the v3 dynamic scheduler. The user-facing
-`--kernel 3` flag is now only a compatibility option; the current dispatch does
-not keep separate v1/v2 GPU variants.
+The active GPU implementation is the dynamic scheduler. Current dispatch does
+not expose a kernel selector or keep separate GPU variant paths.
 
 Relevant code paths:
 
@@ -373,7 +372,7 @@ CPU smoke test:
 ```bash
 make clean
 make NUM_OBJS=3 ENABLE_CUDA=0 ENABLE_OPENMP=1
-./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 1 0 --backend cpu --cpu-threads 8 --cpu-kernel 1
+./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 1 0 --backend cpu --cpu-threads 8
 ```
 
 CUDA build:
@@ -386,13 +385,13 @@ make NUM_OBJS=3 ENABLE_CUDA=1 ENABLE_OPENMP=1
 GPU top-down smoke test:
 
 ```bash
-./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 1 0 --backend gpu --kernel 3
+./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 1 0 --backend gpu
 ```
 
 TSP coupled GPU path:
 
 ```bash
-./multiobj_nobjs3 data/3/tsp/tsp-nobj3-ncities10-seed12870.dat 3 3 0 --backend gpu --kernel 3
+./multiobj_nobjs3 data/3/tsp/tsp-nobj3-ncities10-seed12870.dat 3 3 0 --backend gpu
 ```
 
 On this checkout, CUDA runtime verification still depends on having an actual

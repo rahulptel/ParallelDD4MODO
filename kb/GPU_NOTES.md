@@ -9,7 +9,7 @@ and caveats, read `AGENTS.md`.
 Current autoresearch target:
 
 ```bash
-./multiobj_nobjs5 ./data/5/tsp/tsp-nobj5-ncities15-seed13095.dat 3 1 0 --backend gpu --kernel 3
+./multiobj_nobjs5 ./data/5/tsp/tsp-nobj5-ncities15-seed13095.dat 3 1 0 --backend gpu
 ```
 
 This is:
@@ -215,8 +215,8 @@ For smaller validation before the target:
 ```bash
 make clean
 make NUM_OBJS=3 ENABLE_CUDA=1 ENABLE_OPENMP=1
-./multiobj_nobjs3 data/3/tsp/tsp-nobj3-ncities10-seed12870.dat 3 1 0 --backend gpu --kernel 3
-./multiobj_nobjs3 data/3/tsp/tsp-nobj3-ncities10-seed12870.dat 3 1 0 --backend cpu --cpu-threads 8 --cpu-kernel 1
+./multiobj_nobjs3 data/3/tsp/tsp-nobj3-ncities10-seed12870.dat 3 1 0 --backend gpu
+./multiobj_nobjs3 data/3/tsp/tsp-nobj3-ncities10-seed12870.dat 3 1 0 --backend cpu --cpu-threads 8
 ```
 
 Compare solution counts. Exact frontier equality is better when practical, but

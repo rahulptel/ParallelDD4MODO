@@ -1,3 +1,12 @@
+# Kernel Selection Cleanup Memory
+
+## Current Main Cleanup
+
+- Branch `legacy-v1` preserves the former user-selectable kernel API.
+- Current `main` removed `--kernel`, `--cpu-kernel`, and shorthand `gpu 3`.
+- CPU enumeration now uses the original CPU expansion implementation directly; the CPU kernel-3 implementation was removed.
+- GPU enumeration keeps the active dynamic CUDA implementation directly, without a user-visible kernel selector.
+
 # CUDA Variant Cleanup Memory
 
 This repository now keeps only CUDA kernel variant v3 in the active GPU implementation.
@@ -33,6 +42,6 @@ The active CUDA implementation uses dynamic one-dimensional block scheduling.
 
 - Removed user-selectable CUDA variants v1 and v2 from the active source implementation.
 - Removed the `kernel_version` argument from internal CUDA wrapper APIs; GPU calls now use v3 directly.
-- Kept `--kernel 3` and shorthand `gpu 3` as compatibility no-ops, while rejecting any GPU kernel value other than `3`.
+- Removed the public `--kernel 3` and shorthand `gpu 3` compatibility forms in the later kernel-selection cleanup.
 - Updated GPU experiment generation so new `cc/cuMODD-gpu/table.dat` entries use `--backend gpu` without `--kernel 3`.
-- Preserved CPU `--cpu-kernel 1|3`; those CPU variants are separate from the CUDA cleanup.
+- CPU `--cpu-kernel 1|3` survived this earlier CUDA cleanup, then was removed in the later kernel-selection cleanup.
