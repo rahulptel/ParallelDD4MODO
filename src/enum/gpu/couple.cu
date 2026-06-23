@@ -369,7 +369,8 @@ ParetoFrontier* couple_cutsets_cuda(
     const thrust::device_vector<int>& d_bu_offsets,
     const thrust::device_vector<ObjType>& d_bu_points,
     EnumerationStats* stats,
-    std::string* reason) {
+    std::string* reason,
+    long long gpu_max_prod) {
 
     clock_t t0 = clock();
 
@@ -422,7 +423,7 @@ ParetoFrontier* couple_cutsets_cuda(
     thrust::device_vector<ObjType> d_frontier_pts;
     int frontier_size = 0;
 
-    const long long MAX_BATCH_PRODUCTS = 625000LL;
+    const long long MAX_BATCH_PRODUCTS = gpu_max_prod;
 
     int batch_begin = 0;
     while (batch_begin < static_cast<int>(nz_nodes.size())) {

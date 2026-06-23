@@ -199,11 +199,16 @@ GPU options:
 
 ```bash
 --max-cand <N>
+--max-prod <N>
 ```
 
 `--max-cand` overrides the CUDA candidate batch cap. It accepts plain positive
 integers or `K`, `M`, `B` decimal suffixes, such as `500K`, `20M`, or `2B`.
 The default is `20M`.
+
+`--max-prod` overrides the CUDA coupled batch product cap. It accepts plain positive
+integers or `K`, `M`, `B` decimal suffixes, such as `100K`, `625K`, or `5M`.
+The default is `625K`.
 
 The token `cuda` is intentionally rejected; use `gpu`.
 
@@ -268,6 +273,16 @@ make NUM_OBJS=3 ENABLE_CUDA=1 ENABLE_OPENMP=1
 ./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 1 0 \
   --backend gpu \
   --max-cand 20M \
+  --save-stats --stats-out test.gpu.stats.jsonl
+```
+
+### GPU Coupled Test
+
+```bash
+./multiobj_nobjs3 data/3/knapsack/KP_p-3_n-10_ins-1.dat 1 3 0 \
+  --backend gpu \
+  --max-cand 20M \
+  --max-prod 625K \
   --save-stats --stats-out test.gpu.stats.jsonl
 ```
 

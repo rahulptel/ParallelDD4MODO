@@ -8,6 +8,7 @@
 #include <string>
 
 const long long DEFAULT_GPU_BATCH_SIZE = 20000000LL;
+const long long DEFAULT_GPU_MAX_PROD = 625000LL;
 
 enum Backend
 {
@@ -24,6 +25,7 @@ struct CliOptions
     Backend backend;
     int cpu_threads;
     long long gpu_batch_size;
+    long long gpu_max_prod;
     bool save_frontier;
     std::string frontier_out_path;
     bool save_stats;

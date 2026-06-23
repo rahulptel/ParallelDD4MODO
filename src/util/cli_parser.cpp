@@ -20,6 +20,7 @@ CliOptions::CliOptions()
       backend(BACKEND_CPU),
       cpu_threads(1),
       gpu_batch_size(DEFAULT_GPU_BATCH_SIZE),
+      gpu_max_prod(DEFAULT_GPU_MAX_PROD),
       save_frontier(false),
       save_stats(false)
 {
@@ -207,6 +208,7 @@ void print_usage()
     cout << "\t\t--save-stats: save one JSONL record with run statistics\n";
     cout << "\t\t--stats-out <path>: save JSONL statistics to explicit path\n";
     cout << "\t\t--max-cand <N>: GPU candidate batch cap; supports K, M, B suffixes (default 20M)\n";
+    cout << "\t\t--max-prod <N>: GPU coupled batch product cap; supports K, M, B suffixes (default 625K)\n";
     cout << "\t\toptional arguments can be provided in any order\n";
 
     cout << endl;
@@ -252,6 +254,7 @@ bool parse_cli_args(int argc, char *argv[], CliOptions *out, string *error)
     bool backend_from_shorthand = false;
     bool cpu_threads_set = false;
     bool gpu_batch_set = false;
+    bool gpu_max_prod_set = false;
 
     for (int i = 5; i < argc; ++i)
     {
@@ -367,6 +370,35 @@ bool parse_cli_args(int argc, char *argv[], CliOptions *out, string *error)
                 return false;
             }
             gpu_batch_set = true;
+        }
+        else if (token == "--max-prod")
+        {
+            if (gpu_max_prod_set)
+            {
+                if (error != NULL)
+                {
+                    *error = "Error - GPU coupled batch product cap provided multiple times.";
+                }
+                return false;
+            }
+            if (i + 1 >= argc)
+            {
+                if (error != NULL)
+                {
+                    *error = "Error - --max-prod requires a positive integer, optionally using K, M, or B suffix.";
+                }
+                return false;
+            }
+            string value(argv[++i]);
+            if (!parse_gpu_batch_size(value, &opts.gpu_max_prod))
+            {
+                if (error != NULL)
+                {
+                    *error = "Error - invalid --max-prod value '" + value + "' (expected positive integer with optional K, M, or B suffix).";
+                }
+                return false;
+            }
+            gpu_max_prod_set = true;
         }
         else if (token == "cpu" || token == "gpu")
         {
@@ -531,6 +563,14 @@ bool parse_cli_args(int argc, char *argv[], CliOptions *out, string *error)
         if (error != NULL)
         {
             *error = "Error - --max-cand is only valid with backend=gpu.";
+        }
+        return false;
+    }
+    if (opts.backend == BACKEND_CPU && gpu_max_prod_set)
+    {
+        if (error != NULL)
+        {
+            *error = "Error - --max-prod is only valid with backend=gpu.";
         }
         return false;
     }

@@ -302,6 +302,7 @@ ParetoFrontier* couple_cutsets_cuda(
     const thrust::device_vector<int>& d_bu_offsets,
     const thrust::device_vector<ObjType>& d_bu_points,
     EnumerationStats* stats,
-    std::string* reason);
+    std::string* reason,
+    long long gpu_max_prod);
 
 #endif

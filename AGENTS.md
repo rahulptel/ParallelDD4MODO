@@ -70,6 +70,9 @@ Backend options:
 - GPU candidate batch cap can be overridden with `--max-cand <N>`.
 - `--max-cand` accepts plain positive integers or suffixes `K`, `M`, `B`
   for decimal thousands/millions/billions; default is `20M`.
+- GPU coupled batch product cap can be overridden with `--max-prod <N>`.
+- `--max-prod` accepts plain positive integers or suffixes `K`, `M`, `B`
+  for decimal thousands/millions/billions; default is `625K`.
 
 Output options:
 - `--save-frontier` writes `<input_stem>.frontier.csv.gz`.
