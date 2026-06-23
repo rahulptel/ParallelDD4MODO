@@ -13,7 +13,7 @@
 
 #include <cuda_runtime.h>
 
-#include "../bdd/bdd_multiobj.hpp"
+#include "../multiobj_enum.hpp"
 #include "dominance_utils.cuh"
 
 #include <thrust/device_vector.h>
@@ -48,15 +48,6 @@ struct LayerDominanceContext {
 };
 
 thread_local LayerDominanceContext* g_layer_dom_ctx = NULL;
-
-struct PackedBDDLayer {
-    thrust::device_vector<int> in_edge_offsets;
-    thrust::device_vector<int> edge_src;
-    thrust::device_vector<ObjType> edge_weights;
-    thrust::device_vector<int> min_weight;
-    thrust::device_vector<int> single_parent_id;
-    thrust::device_vector<int> single_parent_arc;
-};
 
 
 
@@ -553,7 +544,7 @@ inline bool apply_knapsack_state_dominance(BDD* bdd,
 
 } // namespace
 
-void BDDMultiObj::filter_dominance_cuda(BDD* bdd,
+void MultiobjEnum::filter_dominance_cuda(BDD* bdd,
                                         const int layer,
                                         const int problem_type,
                                         const int state_dominance,
@@ -572,7 +563,7 @@ void BDDMultiObj::filter_dominance_cuda(BDD* bdd,
     }
 }
 
-void BDDMultiObj::filter_dominance_knapsack_cuda(BDD* bdd, const int layer, EnumerationStats* stats) {
+void MultiobjEnum::filter_dominance_knapsack_cuda(BDD* bdd, const int layer, EnumerationStats* stats) {
     LayerDominanceContext* ctx = g_layer_dom_ctx;
     if (ctx == NULL) {
         return;
@@ -617,98 +608,8 @@ ParetoFrontier* enumerate_bdd_topdown(BDD* bdd,
     }
 
     std::vector<PackedBDDLayer> packed_layers;
-    packed_layers.resize(bdd->num_layers);
-
-    const int first_arc_type = maximization ? 1 : 0;
-    const int second_arc_type = maximization ? 0 : 1;
+    pack_bdd_layers(bdd, packed_layers, false, false, problem_type, state_dominance, maximization, stats);
     const bool pack_knapsack_meta = (problem_type == 1 && state_dominance > 0);
-    const auto pack_begin = std::chrono::steady_clock::now();
-
-    for (int l = 1; l < bdd->num_layers; ++l) {
-        const int next_nodes = bdd->layers[l].size();
-        std::vector<int> h_in_offsets(next_nodes + 1, 0);
-
-        for (int dst_idx = 0; dst_idx < next_nodes; ++dst_idx) {
-            Node* dst_node = bdd->layers[l][dst_idx];
-            int count = 0;
-            const int arc_order[2] = {first_arc_type, second_arc_type};
-            for (int arc_pos = 0; arc_pos < 2; ++arc_pos) {
-                count += dst_node->prev[arc_order[arc_pos]].size();
-            }
-            h_in_offsets[dst_idx + 1] = h_in_offsets[dst_idx] + count;
-        }
-
-        const int num_edges = h_in_offsets[next_nodes];
-        std::vector<int> h_edge_src;
-        std::vector<ObjType> h_edge_weights;
-        h_edge_src.reserve(num_edges);
-        h_edge_weights.reserve(static_cast<size_t>(num_edges) * NOBJS);
-
-        std::vector<int> h_min_weight;
-        std::vector<int> h_parent_id;
-        std::vector<int> h_parent_arc;
-        if (pack_knapsack_meta) {
-            h_min_weight.resize(next_nodes);
-            h_parent_id.resize(next_nodes);
-            h_parent_arc.resize(next_nodes);
-        }
-
-        const int arc_order[2] = {first_arc_type, second_arc_type};
-        for (int dst_idx = 0; dst_idx < next_nodes; ++dst_idx) {
-            Node* dst_node = bdd->layers[l][dst_idx];
-            for (int arc_pos = 0; arc_pos < 2; ++arc_pos) {
-                const int arc_type = arc_order[arc_pos];
-                for (std::vector<Node*>::iterator it = dst_node->prev[arc_type].begin();
-                     it != dst_node->prev[arc_type].end(); ++it) {
-                    Node* src_node = *it;
-                    h_edge_src.push_back(src_node->index);
-
-                    ObjType* w = src_node->weights[arc_type];
-                    for (int o = 0; o < NOBJS; ++o) {
-                        h_edge_weights.push_back(w != NULL ? w[o] : 0);
-                    }
-                }
-            }
-
-            if (pack_knapsack_meta) {
-                h_min_weight[dst_idx] = dst_node->min_weight;
-                const int parents_total = dst_node->prev[0].size() + dst_node->prev[1].size();
-                if (parents_total == 1) {
-                    if (dst_node->prev[0].size() == 1) {
-                        h_parent_id[dst_idx] = dst_node->prev[0][0]->index;
-                        h_parent_arc[dst_idx] = 0;
-                    } else {
-                        h_parent_id[dst_idx] = dst_node->prev[1][0]->index;
-                        h_parent_arc[dst_idx] = 1;
-                    }
-                } else {
-                    h_parent_id[dst_idx] = -1;
-                    h_parent_arc[dst_idx] = -1;
-                }
-            }
-        }
-
-        if (static_cast<int>(h_edge_src.size()) != num_edges ||
-            static_cast<int>(h_edge_weights.size()) != num_edges * NOBJS) {
-            set_reason(reason, "Internal error packing BDD edges for CUDA enumeration");
-            return NULL;
-        }
-
-        packed_layers[l].in_edge_offsets = h_in_offsets;
-        packed_layers[l].edge_src = h_edge_src;
-        packed_layers[l].edge_weights = h_edge_weights;
-        if (pack_knapsack_meta) {
-            packed_layers[l].min_weight = h_min_weight;
-            packed_layers[l].single_parent_id = h_parent_id;
-            packed_layers[l].single_parent_arc = h_parent_arc;
-        }
-    }
-    if (stats != NULL) {
-        stats->wall_pack_transfer_s += std::chrono::duration_cast<std::chrono::duration<double> >(std::chrono::steady_clock::now() - pack_begin).count();
-        if (!sample_gpu_memory_peak(reason, gpu_mem_baseline_used_bytes, &gpu_mem_peak_used_bytes, &gpu_mem_peak_reserved_bytes)) {
-            return NULL;
-        }
-    }
 
     thrust::host_vector<int> h_prev_sizes(root_nodes, 0);
     h_prev_sizes[root_idx] = 1;
@@ -738,7 +639,7 @@ ParetoFrontier* enumerate_bdd_topdown(BDD* bdd,
         thrust::device_vector<int> d_cand_counts(next_nodes, 0);
 
         PackedBDDLayer& packed = packed_layers[l];
-        const int num_edges = packed.edge_src.size();
+        const int num_edges = packed.td_edge_src.size();
         if (num_edges > 0) {
             thrust::device_vector<int> d_edge_counts(num_edges, 0);
             thrust::device_vector<int> d_edge_offsets(num_edges + 1, 0);
@@ -748,7 +649,7 @@ ParetoFrontier* enumerate_bdd_topdown(BDD* bdd,
                 return NULL;
             }
             count_edge_candidates_kernel<<<ceil_div(num_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
-                thrust::raw_pointer_cast(packed.edge_src.data()),
+                thrust::raw_pointer_cast(packed.td_edge_src.data()),
                 thrust::raw_pointer_cast(d_prev_offsets.data()),
                 thrust::raw_pointer_cast(d_edge_counts.data()),
                 num_edges);
@@ -774,7 +675,7 @@ ParetoFrontier* enumerate_bdd_topdown(BDD* bdd,
                     return NULL;
                 }
                 count_destination_candidates_kernel<<<ceil_div(next_nodes, kThreadsPerBlock), kThreadsPerBlock>>>(
-                    thrust::raw_pointer_cast(packed.in_edge_offsets.data()),
+                    thrust::raw_pointer_cast(packed.td_in_edge_offsets.data()),
                     thrust::raw_pointer_cast(d_edge_offsets.data()),
                     next_nodes,
                     thrust::raw_pointer_cast(d_cand_counts.data()),
@@ -790,7 +691,7 @@ ParetoFrontier* enumerate_bdd_topdown(BDD* bdd,
 
                 const long long max_candidate_points_per_batch = 20000000LL;
                 if (total_candidates > max_candidate_points_per_batch) {
-                    thrust::host_vector<int> h_in_edge_offsets = packed.in_edge_offsets;
+                    thrust::host_vector<int> h_in_edge_offsets = packed.td_in_edge_offsets;
                     thrust::host_vector<int> h_edge_offsets = d_edge_offsets;
 
                     d_next_points.clear();
@@ -849,8 +750,8 @@ ParetoFrontier* enumerate_bdd_topdown(BDD* bdd,
                             return NULL;
                         }
                         materialize_edge_candidates_kernel<<<ceil_div(batch_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
-                            thrust::raw_pointer_cast(packed.edge_src.data()) + edge_begin,
-                            thrust::raw_pointer_cast(packed.edge_weights.data()) + edge_begin * NOBJS,
+                            thrust::raw_pointer_cast(packed.td_edge_src.data()) + edge_begin,
+                            thrust::raw_pointer_cast(packed.td_edge_weights.data()) + edge_begin * NOBJS,
                             thrust::raw_pointer_cast(d_batch_edge_offsets.data()),
                             thrust::raw_pointer_cast(d_edge_counts.data()) + edge_begin,
                             thrust::raw_pointer_cast(d_prev_offsets.data()),
@@ -972,8 +873,8 @@ ParetoFrontier* enumerate_bdd_topdown(BDD* bdd,
                         return NULL;
                     }
                     materialize_edge_candidates_kernel<<<ceil_div(num_edges, kThreadsPerBlock), kThreadsPerBlock>>>(
-                        thrust::raw_pointer_cast(packed.edge_src.data()),
-                        thrust::raw_pointer_cast(packed.edge_weights.data()),
+                        thrust::raw_pointer_cast(packed.td_edge_src.data()),
+                        thrust::raw_pointer_cast(packed.td_edge_weights.data()),
                         thrust::raw_pointer_cast(d_edge_offsets.data()),
                         thrust::raw_pointer_cast(d_edge_counts.data()),
                         thrust::raw_pointer_cast(d_prev_offsets.data()),
@@ -1011,7 +912,7 @@ ParetoFrontier* enumerate_bdd_topdown(BDD* bdd,
                             }
                             mark_dominated_by_dst_dynamic_1d_kernel<<<total_blocks, kThreadsPerBlock>>>(
                                 thrust::raw_pointer_cast(d_cand_points.data()),
-                                thrust::raw_pointer_cast(packed.in_edge_offsets.data()),
+                                thrust::raw_pointer_cast(packed.td_in_edge_offsets.data()),
                                 thrust::raw_pointer_cast(d_edge_offsets.data()),
                                 thrust::raw_pointer_cast(d_block_offsets.data()),
                                 next_nodes,
@@ -1072,7 +973,7 @@ ParetoFrontier* enumerate_bdd_topdown(BDD* bdd,
 
             g_layer_dom_ctx = &dom_ctx;
             clock_t init = clock();
-            BDDMultiObj::filter_dominance_cuda(bdd, l, problem_type, state_dominance, stats);
+            MultiobjEnum::filter_dominance_cuda(bdd, l, problem_type, state_dominance, stats);
             if (stats != NULL) {
                 stats->cpu_state_dominance_s += static_cast<double>(clock() - init) / CLOCKS_PER_SEC;
             }
@@ -1140,6 +1041,47 @@ ParetoFrontier* enumerate_bdd_topdown(BDD* bdd,
 
 bool topdown_expand_mdd_layer(
     const PackedMDDLayer& packed_layer,
+    const thrust::device_vector<int>& d_prev_offsets,
+    const thrust::device_vector<ObjType>& d_prev_points,
+    thrust::device_vector<int>& d_next_sizes,
+    thrust::device_vector<int>& d_next_offsets,
+    thrust::device_vector<ObjType>& d_next_points,
+    std::string* reason,
+    long long* total_candidates_out,
+    long long* total_next_out,
+    double* std_candidates_out,
+    double* std_survivors_out,
+    long long* gpu_mem_baseline_used_bytes,
+    long long* gpu_mem_peak_used_bytes,
+    long long* gpu_mem_peak_reserved_bytes) {
+
+    return expand_layer_frontiers(
+        packed_layer.td_in_edge_offsets,
+        packed_layer.td_edge_src,
+        packed_layer.td_edge_weights,
+        packed_layer.td_num_edges,
+        packed_layer.num_nodes,
+        d_prev_offsets,
+        d_prev_points,
+        d_next_sizes,
+        d_next_offsets,
+        d_next_points,
+        reason,
+        total_candidates_out,
+        total_next_out,
+        std_candidates_out,
+        std_survivors_out,
+        gpu_mem_baseline_used_bytes,
+        gpu_mem_peak_used_bytes,
+        gpu_mem_peak_reserved_bytes);
+}
+
+// ---------------------------------------------------------------
+// BDD GPU Top-Down Layer Expansion Wrapper
+// ---------------------------------------------------------------
+
+bool topdown_expand_bdd_layer(
+    const PackedBDDLayer& packed_layer,
     const thrust::device_vector<int>& d_prev_offsets,
     const thrust::device_vector<ObjType>& d_prev_points,
     thrust::device_vector<int>& d_next_sizes,

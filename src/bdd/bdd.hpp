@@ -11,7 +11,7 @@
 #include <limits>
 #include <vector>
 
-#include "pareto_frontier.hpp"
+#include "../enum/pareto_frontier.hpp"
 #include "../util/util.hpp"
 
 using namespace std;

@@ -2,26 +2,29 @@
 // BDD Multiobjective Algorithms
 // ----------------------------------------------------------
 
-#ifndef BDD_MULTIOBJ_HPP_
-#define BDD_MULTIOBJ_HPP_
+#ifndef MULTIOBJ_ENUM_HPP_
+#define MULTIOBJ_ENUM_HPP_
 
 #include <string>
 
 #include "../mdd/mdd.hpp"
 #include "../util/util.hpp"
-#include "bdd.hpp"
+#include "../bdd/bdd.hpp"
 #include "pareto_frontier.hpp"
 #include "../util/stats.hpp"
 
 //
-// BDD Multiobjective Algorithms
+// Multiobjective Enumeration Dispatch Hub
 //
-struct BDDMultiObj {
+struct MultiobjEnum {
     // Find pareto frontier from top-down approach
 	static ParetoFrontier* pareto_frontier_topdown(BDD* bdd, bool maximization=true, const int problem_type=-1, const int state_dominance=0, EnumerationStats* stats = NULL, int cpu_threads = 1, int cpu_topdown_kernel = 1);
 
     // Find pareto frontier from top-down approach / CUDA
     static ParetoFrontier* pareto_frontier_topdown_cuda(BDD* bdd, bool maximization=true, const int problem_type=-1, const int state_dominance=0, EnumerationStats* stats = NULL, std::string* reason = NULL);
+
+    // Find pareto frontier using dynamic layer cutset / CUDA for BDD
+    static ParetoFrontier* pareto_frontier_dynamic_layer_cutset_cuda(BDD* bdd, bool maximization=true, const int problem_type=-1, const int state_dominance=0, EnumerationStats* stats = NULL, std::string* reason = NULL);
 
     // Find pareto frontier from top-down approach / CUDA for MDD
     static ParetoFrontier* pareto_frontier_topdown_cuda(MDD* mdd, EnumerationStats* stats = NULL, std::string* reason = NULL);

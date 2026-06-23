@@ -7,7 +7,7 @@
 
 #define BOOST_DYNAMIC_BITSET_DONT_USE_FRIENDS
 
-#include "../bdd/pareto_frontier.hpp"
+#include "../enum/pareto_frontier.hpp"
 #include <algorithm>
 #include <boost/dynamic_bitset.hpp>
 #include <cassert>

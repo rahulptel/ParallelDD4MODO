@@ -13,7 +13,7 @@
 
 #include <cuda_runtime.h>
 
-#include "../bdd/bdd_multiobj.hpp"
+#include "../multiobj_enum.hpp"
 #include "dominance_utils.cuh"
 #include "enum_types.cuh"
 
@@ -362,8 +362,8 @@ bool merge_clean_points_into_frontier(thrust::device_vector<ObjType>& frontier,
 // Works identically for top-down and bottom-up.
 // ---------------------------------------------------------------
 
-ParetoFrontier* couple_mdd_cutsets(
-    const PackedMDDLayer& packed_layer,
+ParetoFrontier* couple_cutsets_cuda(
+    int cutset_nodes,
     const thrust::device_vector<int>& d_td_offsets,
     const thrust::device_vector<ObjType>& d_td_points,
     const thrust::device_vector<int>& d_bu_offsets,
@@ -372,7 +372,6 @@ ParetoFrontier* couple_mdd_cutsets(
     std::string* reason) {
 
     clock_t t0 = clock();
-    const int cutset_nodes = packed_layer.num_nodes;
 
     thrust::host_vector<int> h_td_off = d_td_offsets;
     thrust::host_vector<int> h_bu_off = d_bu_offsets;

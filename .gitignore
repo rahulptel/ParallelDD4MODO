@@ -7,6 +7,7 @@ reports
 obj
 resources
 outputs
+tests/tmp/
 
 *MISC*
 *OUTPUT*

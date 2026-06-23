@@ -23,11 +23,15 @@ For example, a 3-objective build produces `multiobj_nobjs3`. Use a binary whose
 |-- compile_all.sh        # Helper script for building several NUM_OBJS binaries
 |-- src/
 |   |-- main.cpp          # CLI entry point, instance dispatch, build/enumeration flow
-|   |-- bdd/              # BDD data structures, constructors, and Pareto algorithms
-|   |-- mdd/              # MDD data structures and TSP MDD construction
+|   |-- bdd/              # BDD data structures and constructors (knapsack, independent set)
+|   |-- mdd/              # MDD data structures and TSP MDD constructor
 |   |-- instances/        # Input parsers for knapsack, set packing, independent set, TSP
-|   |-- cuda/             # CUDA kernels/wrappers plus CPU-build stubs
-|   `-- util/             # CLI parsing, output, stats, OpenMP helpers, CPU affinity
+|   |-- enum/             # Pareto frontier algorithms and enumeration dispatch
+|   |   |-- cpu/          # CPU-based BFS, bottom-up, and layer cutset coupling algorithms
+|   |   |-- gpu/          # CUDA kernels/wrappers for GPU-based BFS and dynamic layer cutset
+|   |   |-- pareto_frontier.hpp  # Nondominated frontier container and merge/convolution logic
+|   |   `-- multiobj_enum.hpp/.cpp # Central dispatch hub for CPU/GPU frontier enumeration
+|   `-- util/             # CLI parsing, output, stats, OpenMP helpers, CPU affinity, GPU options
 |-- data/                 # Benchmark/test instances grouped by objective count
 |-- cc/                   # Cluster/experiment job scripts and tables
 `-- results/              # Result summaries and plotting scripts, when present
@@ -45,15 +49,28 @@ The available enumeration methods are:
 - `2`: bottom-up BFS frontier propagation.
 - `3`: dynamic layer cutset coupling.
 
-CUDA enumeration code is split by operation:
+Pareto frontier enumeration code is located in `src/enum/`:
 
-- `src/cuda/enum.cu`: public CUDA wrapper entry points and device setup.
-- `src/cuda/topdown.cu`: BDD and MDD top-down frontier expansion.
-- `src/cuda/bottomup.cu`: shared MDD layer expansion and expansion scoring.
-- `src/cuda/couple.cu`: MDD cutset product generation, merge, and cleanup.
-- `src/cuda/enum_types.cuh` and `src/cuda/dominance_utils.cuh`: shared CUDA
-  types and small device helpers.
-- `src/cuda/cuda_stubs.cpp`: CPU-only build stubs when `ENABLE_CUDA=0`.
+- `src/enum/pareto_frontier.hpp`: Pareto frontier data structure, merge, and convolution logic.
+- `src/enum/multiobj_enum.hpp/.cpp`: central interface/dispatch for CPU and GPU enumeration methods.
+
+CPU enumeration methods (`src/enum/cpu/`):
+- `enum.cpp`: BDD/MDD top-down and bottom-up BFS frontier propagation.
+- `couple.cpp`: BDD/MDD dynamic layer cutset coupling.
+- `dominance.cpp`: BDD knapsack/set packing state dominance filtering.
+- `bottomup.cpp`: bottom-up enumeration helpers.
+- `topdown.cpp`: top-down enumeration helpers.
+- `cpu_helpers.hpp`: shared CPU functions for frontier operations.
+- `cpu_wrappers.hpp`: CPU method declarations.
+
+GPU/CUDA enumeration methods (`src/enum/gpu/`):
+- `enum.cu`: CUDA wrappers, device setup, and execution dispatch.
+- `topdown.cu`: BDD and MDD GPU top-down frontier propagation.
+- `bottomup.cu`: GPU bottom-up propagation kernels/helpers.
+- `couple.cu`: MDD dynamic layer cutset coupling kernels (cutset product join/merge).
+- `enum_types.cuh` and `dominance_utils.cuh`: CUDA-specific type definitions and device utility functions.
+- `cuda_stubs.cpp`: Stub implementations used during CPU-only builds (`ENABLE_CUDA=0`).
+- `cuda_wrappers.hpp`: GPU method declarations.
 
 ## Build
 

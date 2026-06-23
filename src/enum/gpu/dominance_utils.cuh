@@ -5,7 +5,7 @@
 #ifndef CUDA_DOMINANCE_UTILS_CUH_
 #define CUDA_DOMINANCE_UTILS_CUH_
 
-#include "../util/util.hpp"
+#include "../../util/util.hpp"
 
 static __device__ __forceinline__ bool dominates_or_tie_before(const ObjType* lhs,
                                                                const ObjType* rhs,

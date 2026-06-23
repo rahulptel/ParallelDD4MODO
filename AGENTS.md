@@ -155,28 +155,37 @@ JSONL stats are written by `src/util/output_utils.cpp` and include identity, out
 ## 5) Codebase Map
 - `src/main.cpp`
   - CLI dispatch, instance loading, BDD/MDD construction, method/backend selection, output calls.
-- `src/util/cli_parser.*`
-  - Positional CLI and optional backend/output parsing.
-- `src/util/output_utils.*`
-  - Three-line stdout, gzip frontier CSV, JSONL stats.
-- `src/util/stats.hpp`
-  - `EnumerationStats` and `DDStats`.
-- `src/util/omp_compat.hpp`, `src/util/cpu_affinity.*`
-  - OpenMP compatibility and CPU thread pinning.
+- `src/util/`
+  - `cli_parser.*`: Positional CLI and optional backend/output parsing.
+  - `output_utils.*`: Three-line stdout, gzip frontier CSV, JSONL stats.
+  - `stats.hpp`: `EnumerationStats` and `DDStats` structures.
+  - `omp_compat.hpp`, `cpu_affinity.*`: OpenMP compatibility and CPU thread pinning.
+  - `util.hpp/.cpp`: Common math and print helpers.
+  - `gpu_options.hpp`: Global configuration options for GPU kernels (e.g. maximum transition queue capacity).
 - `src/bdd/`
   - `bdd.hpp`: BDD node/arc structure and maintenance methods.
   - `bdd_alg.hpp`: BDD reduction logic; `bdd_alg.cpp` is effectively empty.
-  - `pareto_frontier.hpp`: nondominated frontier container and merge/convolution logic.
-  - `bdd_multiobj.hpp/.cpp`: CPU frontier algorithms, dominance filtering, MDD overloads, CUDA wrapper entry points.
   - `knapsack_bdd.*`, `indepset_bdd.*`: exact BDD constructors.
 - `src/mdd/`
   - `mdd.hpp`: MDD node/arc structure.
   - `tsp_mdd.*`: exact TSP MDD constructor.
+- `src/enum/`
+  - `multiobj_enum.hpp/.cpp`: Central multiobjective frontier enumeration dispatch hub (`MultiobjEnum`).
+  - `pareto_frontier.hpp`: Nondominated frontier container, and frontier merge/convolution logic.
+  - `cpu/`: CPU-based frontier propagation:
+    - `enum.cpp`: High-level CPU frontier propagation orchestrator.
+    - `topdown.cpp`, `bottomup.cpp`, `couple.cpp`: Implementation of CPU top-down, bottom-up, and dynamic layer cutset (coupled) algorithms.
+    - `dominance.cpp`: CPU-based state dominance filters for knapsack and set packing.
+    - `cpu_helpers.hpp`, `cpu_wrappers.hpp`: Threading helper functions and internal CPU wrapper routines.
+  - `gpu/`: GPU-based frontier propagation (compiled when `ENABLE_CUDA=1`):
+    - `enum.cu`: High-level GPU frontier propagation dispatch.
+    - `topdown.cu`, `bottomup.cu`, `couple.cu`: CUDA kernels and host logic for top-down, bottom-up (stub), and coupled algorithms.
+    - `dominance_utils.cuh`: CUDA state dominance helper routines.
+    - `enum_types.cuh`: CUDA device-side structures (e.g. `GPUFrontierPool`).
+    - `cuda_wrappers.hpp`, `cuda_stubs.cpp`: Outer wrappers for CUDA launches, plus stub routines used when CUDA is disabled.
 - `src/instances/`
   - Parsers for knapsack, set packing, independent set, and TSP.
   - `assignment_instance.*` is stubbed and not integrated in `main`.
-- `src/cuda/`
-  - CUDA top-down and coupled kernels plus stubs used when `ENABLE_CUDA=0`.
 - `data/`
   - Included benchmark/input data for objective dimensions `3..7`.
 - `cc/`

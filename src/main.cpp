@@ -14,13 +14,13 @@
 
 #include "bdd/bdd.hpp"
 #include "bdd/bdd_alg.hpp"
-#include "bdd/bdd_multiobj.hpp"
+#include "enum/multiobj_enum.hpp"
 #include "util/cli_parser.hpp"
 #include "util/omp_compat.hpp"
 #include "util/stats.hpp"
 #include "util/util.hpp"
 #include "util/output_utils.hpp"
-#include "bdd/pareto_frontier.hpp"
+#include "enum/pareto_frontier.hpp"
 
 // Knapsack includes
 #include "instances/knapsack_instance.hpp"
@@ -222,7 +222,7 @@ int main(int argc, char *argv[])
         if (method == 1) { // Top-down
             if (backend == BACKEND_GPU) {
                 string cuda_reason;
-                pareto_frontier = BDDMultiObj::pareto_frontier_topdown_cuda(mdd, enumeration_stats, &cuda_reason);
+                pareto_frontier = MultiobjEnum::pareto_frontier_topdown_cuda(mdd, enumeration_stats, &cuda_reason);
                 if (pareto_frontier == NULL) {
                     cout << "Error - GPU backend requested but top-down enumeration failed";
                     if (!cuda_reason.empty()) cout << ": " << cuda_reason;
@@ -231,7 +231,7 @@ int main(int argc, char *argv[])
                 }
             } else {
                 try {
-                    pareto_frontier = BDDMultiObj::pareto_frontier_topdown(mdd, enumeration_stats, cpu_threads, cpu_kernel);
+                    pareto_frontier = MultiobjEnum::pareto_frontier_topdown(mdd, enumeration_stats, cpu_threads, cpu_kernel);
                 } catch (const std::exception& e) {
                     cout << "Error - CPU backend enumeration failed: " << e.what() << endl;
                     exit(1);
@@ -240,7 +240,7 @@ int main(int argc, char *argv[])
         } else if (method == 3) { // Coupled
             if (backend == BACKEND_GPU) {
                 string cuda_reason;
-                pareto_frontier = BDDMultiObj::pareto_frontier_dynamic_layer_cutset_cuda(mdd, enumeration_stats, &cuda_reason);
+                pareto_frontier = MultiobjEnum::pareto_frontier_dynamic_layer_cutset_cuda(mdd, enumeration_stats, &cuda_reason);
                 if (pareto_frontier == NULL) {
                     cout << "Error - GPU backend requested but coupled enumeration failed";
                     if (!cuda_reason.empty()) cout << ": " << cuda_reason;
@@ -249,7 +249,7 @@ int main(int argc, char *argv[])
                 }
             } else {
                 try {
-                    pareto_frontier = BDDMultiObj::pareto_frontier_dynamic_layer_cutset(mdd, enumeration_stats, cpu_threads, cpu_kernel);
+                    pareto_frontier = MultiobjEnum::pareto_frontier_dynamic_layer_cutset(mdd, enumeration_stats, cpu_threads, cpu_kernel);
                 } catch (const std::exception& e) {
                     cout << "Error - CPU backend enumeration failed: " << e.what() << endl;
                     exit(1);
@@ -334,7 +334,7 @@ int main(int argc, char *argv[])
         if (backend == BACKEND_GPU)
         {
             string cuda_reason;
-            pareto_frontier = BDDMultiObj::pareto_frontier_topdown_cuda(bdd, maximization, problem_type, state_dominance, enumeration_stats, &cuda_reason);
+            pareto_frontier = MultiobjEnum::pareto_frontier_topdown_cuda(bdd, maximization, problem_type, state_dominance, enumeration_stats, &cuda_reason);
             if (pareto_frontier == NULL)
             {
                 cout << "Error - GPU backend requested but top-down enumeration failed";
@@ -350,7 +350,7 @@ int main(int argc, char *argv[])
         {
             try
             {
-                pareto_frontier = BDDMultiObj::pareto_frontier_topdown(bdd, maximization, problem_type, state_dominance, enumeration_stats, cpu_threads, cpu_kernel);
+                pareto_frontier = MultiobjEnum::pareto_frontier_topdown(bdd, maximization, problem_type, state_dominance, enumeration_stats, cpu_threads, cpu_kernel);
             }
             catch (const std::exception &e)
             {
@@ -367,24 +367,34 @@ int main(int argc, char *argv[])
             cout << "Error - GPU backend is unsupported for method 2." << endl;
             exit(1);
         }
-        pareto_frontier = BDDMultiObj::pareto_frontier_bottomup(bdd, maximization, problem_type, state_dominance, enumeration_stats, cpu_threads);
+        pareto_frontier = MultiobjEnum::pareto_frontier_bottomup(bdd, maximization, problem_type, state_dominance, enumeration_stats, cpu_threads);
     }
     else if (method == 3)
     {
         // -- Dynamic layer cutset --
         if (backend == BACKEND_GPU)
         {
-            cout << "Error - GPU backend is unsupported for method 3." << endl;
-            exit(1);
+            string cuda_reason;
+            pareto_frontier = MultiobjEnum::pareto_frontier_dynamic_layer_cutset_cuda(bdd, maximization, problem_type, state_dominance, enumeration_stats, &cuda_reason);
+            if (pareto_frontier == NULL)
+            {
+                cout << "Error - GPU backend requested but coupled enumeration failed";
+                if (!cuda_reason.empty()) cout << ": " << cuda_reason;
+                cout << endl;
+                exit(1);
+            }
         }
-        try
+        else
         {
-            pareto_frontier = BDDMultiObj::pareto_frontier_dynamic_layer_cutset(bdd, maximization, problem_type, state_dominance, enumeration_stats, cpu_threads, cpu_kernel);
-        }
-        catch (const std::exception &e)
-        {
-            cout << "Error - CPU backend enumeration failed: " << e.what() << endl;
-            exit(1);
+            try
+            {
+                pareto_frontier = MultiobjEnum::pareto_frontier_dynamic_layer_cutset(bdd, maximization, problem_type, state_dominance, enumeration_stats, cpu_threads, cpu_kernel);
+            }
+            catch (const std::exception &e)
+            {
+                cout << "Error - CPU backend enumeration failed: " << e.what() << endl;
+                exit(1);
+            }
         }
     }
     else

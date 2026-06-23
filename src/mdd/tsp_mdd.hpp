@@ -5,7 +5,7 @@
 #ifndef TSP_MDD_HPP_
 #define TSP_MDD_HPP_
 
-#include "../bdd/pareto_frontier.hpp"
+#include "../enum/pareto_frontier.hpp"
 #include "../instances/tsp_instance.hpp"
 #include "mdd.hpp"
 

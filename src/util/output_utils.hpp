@@ -4,7 +4,7 @@
 #include <string>
 #include "stats.hpp"
 #include "cli_parser.hpp"
-#include "../bdd/pareto_frontier.hpp"
+#include "../enum/pareto_frontier.hpp"
 
 //
 // Output utilities

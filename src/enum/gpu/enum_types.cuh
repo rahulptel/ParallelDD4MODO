@@ -11,10 +11,11 @@
 #include <cuda_runtime.h>
 #include <thrust/device_vector.h>
 
-#include "../util/util.hpp"
+#include "../../util/util.hpp"
 
 struct EnumerationStats;
 struct MDD;
+struct BDD;
 struct ParetoFrontier;
 
 // Flat representation of one MDD layer's connectivity, on device.
@@ -39,6 +40,32 @@ struct PackedMDDLayer {
     // Per-node arc counts for the layer-value heuristic.
     thrust::device_vector<int> out_arc_counts;
     thrust::device_vector<int> in_arc_counts;
+};
+
+// Flat representation of one BDD layer's connectivity, on device.
+struct PackedBDDLayer {
+    int num_nodes;
+
+    // Top-down: incoming arcs grouped by destination node (this layer).
+    int td_num_edges;
+    thrust::device_vector<int> td_in_edge_offsets;
+    thrust::device_vector<int> td_edge_src;
+    thrust::device_vector<ObjType> td_edge_weights;
+
+    // Bottom-up: outgoing arcs grouped by node (this layer).
+    int bu_num_edges;
+    thrust::device_vector<int> bu_in_edge_offsets;
+    thrust::device_vector<int> bu_edge_src;
+    thrust::device_vector<ObjType> bu_edge_weights;
+
+    // Per-node arc counts for the layer-value heuristic.
+    thrust::device_vector<int> out_arc_counts;
+    thrust::device_vector<int> in_arc_counts;
+
+    // BDD Knapsack Dominance metadata (packed top-down)
+    thrust::device_vector<int> min_weight;
+    thrust::device_vector<int> single_parent_id;
+    thrust::device_vector<int> single_parent_arc;
 };
 
 // ----------------------------------------------------------
@@ -194,6 +221,9 @@ bool expand_layer_frontiers(
 // MDD layer packing helper
 void pack_mdd_layers(MDD* mdd, std::vector<PackedMDDLayer>& packed, bool pack_bottom_up, bool pack_heuristic);
 
+// BDD layer packing helper
+void pack_bdd_layers(BDD* bdd, std::vector<PackedBDDLayer>& packed, bool pack_bottom_up, bool pack_heuristic, const int problem_type, const int state_dominance, bool maximization, EnumerationStats* stats = NULL);
+
 // Directional wrappers
 bool topdown_expand_mdd_layer(
     const PackedMDDLayer& packed_layer,
@@ -227,9 +257,41 @@ bool bottomup_expand_mdd_layer(
     long long* gpu_mem_peak_used_bytes = NULL,
     long long* gpu_mem_peak_reserved_bytes = NULL);
 
-// Coupling helper
-ParetoFrontier* couple_mdd_cutsets(
-    const PackedMDDLayer& packed_layer,
+bool topdown_expand_bdd_layer(
+    const PackedBDDLayer& packed_layer,
+    const thrust::device_vector<int>& d_prev_offsets,
+    const thrust::device_vector<ObjType>& d_prev_points,
+    thrust::device_vector<int>& d_next_sizes,
+    thrust::device_vector<int>& d_next_offsets,
+    thrust::device_vector<ObjType>& d_next_points,
+    std::string* reason,
+    long long* total_candidates_out = NULL,
+    long long* total_next_out = NULL,
+    double* std_candidates_out = NULL,
+    double* std_survivors_out = NULL,
+    long long* gpu_mem_baseline_used_bytes = NULL,
+    long long* gpu_mem_peak_used_bytes = NULL,
+    long long* gpu_mem_peak_reserved_bytes = NULL);
+
+bool bottomup_expand_bdd_layer(
+    const PackedBDDLayer& packed_layer,
+    const thrust::device_vector<int>& d_prev_offsets,
+    const thrust::device_vector<ObjType>& d_prev_points,
+    thrust::device_vector<int>& d_next_sizes,
+    thrust::device_vector<int>& d_next_offsets,
+    thrust::device_vector<ObjType>& d_next_points,
+    std::string* reason,
+    long long* total_candidates_out = NULL,
+    long long* total_next_out = NULL,
+    double* std_candidates_out = NULL,
+    double* std_survivors_out = NULL,
+    long long* gpu_mem_baseline_used_bytes = NULL,
+    long long* gpu_mem_peak_used_bytes = NULL,
+    long long* gpu_mem_peak_reserved_bytes = NULL);
+
+// General coupling helper
+ParetoFrontier* couple_cutsets_cuda(
+    int num_nodes,
     const thrust::device_vector<int>& d_td_offsets,
     const thrust::device_vector<ObjType>& d_td_points,
     const thrust::device_vector<int>& d_bu_offsets,
