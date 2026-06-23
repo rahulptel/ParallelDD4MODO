@@ -68,9 +68,12 @@ then
 else
   : > "$CASE_STDERR_FILE"
   : > "$CASE_STDOUT_FILE"
-  timeout --signal=TERM --kill-after=30s $CASE_TIME_LIMIT \
-    prlimit --as=$CASE_MEM_LIMIT_BYTES -- bash -lc "$COMM" > "$CASE_STDOUT_FILE" 2> "$CASE_STDERR_FILE"
+  setsid -w timeout --signal=TERM --kill-after=5s $CASE_TIME_LIMIT \
+    prlimit --as=$CASE_MEM_LIMIT_BYTES -- bash -lc "$COMM" > "$CASE_STDOUT_FILE" 2> "$CASE_STDERR_FILE" &
+  SESSION_PID=$!
+  wait $SESSION_PID
   STATUS=$?
+  kill -9 -$SESSION_PID 2>/dev/null
 
   if test $STATUS -eq 124
   then
