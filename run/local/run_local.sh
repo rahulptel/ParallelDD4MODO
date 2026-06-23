@@ -24,7 +24,7 @@ while [[ $# -gt 0 ]]; do
             PROBLEM_FILTER="$2"
             shift 2
             ;;
-        -o|--objectives)
+        -k|--objectives)
             if [ -z "${2:-}" ]; then
                 echo "Error: --objectives requires a value."
                 exit 1
@@ -32,7 +32,7 @@ while [[ $# -gt 0 ]]; do
             OBJECTIVES_FILTER="$2"
             shift 2
             ;;
-        -v|--variables)
+        -n|--variables)
             if [ -z "${2:-}" ]; then
                 echo "Error: --variables requires a value."
                 exit 1
@@ -52,8 +52,8 @@ while [[ $# -gt 0 ]]; do
             echo "Usage: $0 <farm_name_or_path_to_dat> [options]"
             echo "Options:"
             echo "  -p, --problem <val>     Filter by problem type (1=knapsack, 2=set packing, 3=tsp)"
-            echo "  -o, --objectives <val>  Filter by number of objectives (3-7)"
-            echo "  -v, --variables <val>   Filter by number of variables/cities"
+            echo "  -k, --objectives <val>  Filter by number of objectives (3-7)"
+            echo "  -n, --variables <val>   Filter by number of variables/cities"
             echo "  -s, --seed <val>        Filter by seed/instance number"
             exit 0
             ;;
@@ -92,8 +92,8 @@ OUTPUTS_DIR="$PROJECT_ROOT/outputs/local/$FARM_NAME"
 
 echo "Running local execution for: $FARM_NAME"
 [ -n "$PROBLEM_FILTER" ] && echo "  Filter: problem = $PROBLEM_FILTER"
-[ -n "$OBJECTIVES_FILTER" ] && echo "  Filter: objectives = $OBJECTIVES_FILTER"
-[ -n "$VARIABLES_FILTER" ] && echo "  Filter: variables = $VARIABLES_FILTER"
+[ -n "$OBJECTIVES_FILTER" ] && echo "  Filter: k = $OBJECTIVES_FILTER"
+[ -n "$VARIABLES_FILTER" ] && echo "  Filter: n = $VARIABLES_FILTER"
 [ -n "$SEED_FILTER" ] && echo "  Filter: seed = $SEED_FILTER"
 echo "Reading cases from $TABLE_PATH..."
 
