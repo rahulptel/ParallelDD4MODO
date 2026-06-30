@@ -4,6 +4,7 @@
 
 #include "setcovering_bdd.hpp"
 #include "bdd_alg.hpp"
+#include<deque>
 
 //
 // Preprocess 

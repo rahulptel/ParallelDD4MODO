@@ -94,17 +94,6 @@ int main(int argc, char *argv[])
     int approx_T = atoi(argv[6]);
     int dominance = atoi(argv[7]);
     int n_vars = atoi(argv[8]);
-    bool new_order_provided = (n_vars > 0);
-
-    // catch new order
-    if (new_order_provided)
-    {
-        vector<int> new_order;
-        for (int i = 0; i < n_vars; i++)
-        {
-            new_order.push_back(atoi(argv[9 + i]));
-        }
-    }
 
     // For statistical analysis
     Stats timers;
@@ -133,10 +122,6 @@ int main(int argc, char *argv[])
         //     // Reorder variables
         //     inst.reorder_coefficients();
         // }
-        if (new_order_provided)
-        {
-            inst.reset_order(new_order);
-        }
 
         // Construct BDD
         KnapsackBDDConstructor bddCons(&inst);
@@ -264,10 +249,6 @@ int main(int argc, char *argv[])
 
         AbsValInstance inst;
         inst.read_BDD(argv[1]);
-        if (new_order_provided)
-        {
-            inst.reset_order(new_order);
-        }
 
         AbsValBDDConstructor bddCons(&inst);
         bdd = bddCons.generate_exact();
